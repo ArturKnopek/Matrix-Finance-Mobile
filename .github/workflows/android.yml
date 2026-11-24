@@ -1,0 +1,155 @@
+# Android: testy → budowa APK (flet build) → test na emulatorze → (opcjonalnie) wydanie w Releases.
+#
+# Wydanie: Actions → „Android (APK)” → Run workflow → zaznacz „wydanie” (tag v<wersja z pyproject.toml>)
+# albo wypchnij tag v*.
+#
+# Podpis APK: bez sekretów APK jest podpisany kluczem tymczasowym (każda kompilacja innym — aktualizacja
+# wymaga wtedy odinstalowania). Stały klucz: dodaj sekrety ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD,
+# ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD (instrukcja: tools/make_keystore.sh).
+name: Android (APK)
+
+on:
+  workflow_dispatch:
+    inputs:
+      wydanie:
+        description: "Opublikuj wydanie (Releases) z APK — tag v<wersja z pyproject.toml>"
+        type: boolean
+        default: false
+  push:
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  FLET_VERSION: "1.1.3"
+  BUNDLE_ID: "pl.matrixfinance.mobile"
+
+jobs:
+  tests:
+    name: Testy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install "flet[all]==${FLET_VERSION}" pytest
+      - run: python -m pytest -q -p no:cacheprovider
+
+  build-apk:
+    name: Budowa APK
+    needs: tests
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Wersja
+        id: ver
+        run: echo "version=$(python3 -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")" >> "$GITHUB_OUTPUT"
+      - run: python -m pip install "flet[all]==${FLET_VERSION}"
+      - name: Klucz podpisu (jeśli ustawiony w sekretach)
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            {
+              echo "FLET_ANDROID_SIGNING_KEY_STORE=$RUNNER_TEMP/release.jks"
+              echo "FLET_ANDROID_SIGNING_KEY_STORE_PASSWORD=$KEYSTORE_PASSWORD"
+              echo "FLET_ANDROID_SIGNING_KEY_ALIAS=$KEY_ALIAS"
+              echo "FLET_ANDROID_SIGNING_KEY_PASSWORD=$KEY_PASSWORD"
+            } >> "$GITHUB_ENV"
+            echo "Podpis: stały klucz z sekretów."
+          else
+            echo "::warning::Brak sekretów ANDROID_KEYSTORE_* — APK podpisany kluczem tymczasowym."
+          fi
+      - name: flet build apk
+        run: |
+          flet build apk --yes --no-rich-output --log-format github \
+            --bundle-id "$BUNDLE_ID" --product "Matrix Finance" --org pl.matrixfinance \
+            --build-version "${{ steps.ver.outputs.version }}" --build-number "${{ github.run_number }}" \
+            --android-adaptive-icon-background "#000000" --splash-color "#000000" --splash-dark-color "#000000"
+      - name: Nazwa pliku
+        run: |
+          mkdir -p out
+          cp build/apk/*.apk "out/MatrixFinance-${{ steps.ver.outputs.version }}.apk"
+          (cd out && sha256sum *.apk > "MatrixFinance-${{ steps.ver.outputs.version }}.apk.sha256")
+          ls -la out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MatrixFinance-APK
+          path: out/*
+          if-no-files-found: error
+
+  emulator:
+    name: Test na emulatorze Androida
+    needs: build-apk
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: MatrixFinance-APK
+          path: apk
+      - name: KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: |
+            adb install -r apk/*.apk
+            adb logcat -c
+            adb shell monkey -p "$BUNDLE_ID" -c android.intent.category.LAUNCHER 1
+            sleep 60
+            mkdir -p shots
+            adb exec-out screencap -p > shots/01_start.png
+            adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 || true
+            adb pull /sdcard/ui.xml shots/ui.xml >/dev/null 2>&1 || true
+            echo "== tekst na ekranie =="; grep -o -E '(text|content-desc)="[^"]+"' shots/ui.xml | head -40 || true
+            echo "== logcat (python/flet) =="; adb logcat -d | grep -iE "python|flet|traceback|error" | tail -60 || true
+            adb shell pidof "$BUNDLE_ID" && echo "APLIKACJA DZIAŁA" || (echo "::error::Aplikacja nie działa po uruchomieniu"; exit 1)
+            grep -q -E "Matrix Finance|Połącz z komputerem" shots/ui.xml && echo "EKRAN STARTOWY OK" || echo "::warning::Nie znaleziono tekstu ekranu startowego w zrzucie interfejsu"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zrzuty-emulator
+          path: shots/
+
+  release:
+    name: Wydanie (Releases)
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.wydanie)
+    needs: [build-apk, emulator]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: RELEASE_NOTES.md
+          sparse-checkout-cone-mode: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: MatrixFinance-APK
+          path: apk
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('v{0}', needs.build-apk.outputs.version) }}
+          target_commitish: ${{ github.sha }}
+          name: Matrix Finance Mobile ${{ needs.build-apk.outputs.version }}
+          body_path: RELEASE_NOTES.md
+          files: apk/*
