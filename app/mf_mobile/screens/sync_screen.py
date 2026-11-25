@@ -84,29 +84,58 @@ def build(app: Any) -> List[ft.Control]:
                                   scroll=ft.ScrollMode.AUTO),
                 actions=[ft.TextButton(content="OK", on_click=lambda ev: app.close())], bgcolor=p.panel))
 
-    async def upload(e: Any) -> None:
+    def prepare_upload() -> Any:
         if not store.pending():
             app.toast("Brak zmian do wysłania.")
-            return
+            return None
         if not save_password():
+            return None
+        return store.ops_file()
+
+    async def upload(e: Any) -> None:
+        """Udostępnij → OneDrive → folder MatrixFinance (zapis bezpośrednio w chmurze, nie w pamięci telefonu)."""
+        prepared = prepare_upload()
+        if not prepared:
             return
-        name, data = store.ops_file()
+        name, data = prepared
         try:
-            path = await app.picker.save_file(dialog_title="Zapisz w OneDrive › MatrixFinance", file_name=name,
-                                              src_bytes=data)
-        except Exception as err:  # np. brak obsługi zapisu w przeglądarce
+            result = await app.share.share_files(
+                [ft.ShareFile.from_bytes(data, mime_type="application/octet-stream", name=name)],
+                title="Wyślij do OneDrive › MatrixFinance", subject=name)
+        except Exception as err:
+            app.toast(f"Nie udało się otworzyć „Udostępnij”: {err}", error=True)
+            return
+        status = getattr(getattr(result, "status", None), "value", "unavailable")
+        if status == "dismissed":
+            app.toast("Anulowano — zmiany czekają dalej.")
+            return
+        store.mark_sent()
+        app.render()
+        app.toast("Wysłano. Komputer dopisze zmiany przy najbliższej synchronizacji.")
+
+    async def save_elsewhere(e: Any) -> None:
+        """Zapasowo: zapis pliku w wybranym miejscu (np. inna chmura lub menedżer plików)."""
+        prepared = prepare_upload()
+        if not prepared:
+            return
+        name, data = prepared
+        try:
+            path = await app.picker.save_file(dialog_title="Zapisz plik zmian", file_name=name, src_bytes=data)
+        except Exception as err:
             app.toast(f"Nie udało się zapisać pliku: {err}", error=True)
             return
         if path is None and not app.page.web:
-            return  # anulowano
+            return
         store.mark_sent()
         app.render()
-        app.toast("Zapisano zmiany. Komputer dopisze je przy najbliższej synchronizacji.")
+        app.toast("Zapisano plik. Pamiętaj, żeby trafił do folderu MatrixFinance w OneDrive.")
 
     out.append(password)
     out.append(primary_button(p, "Pobierz dane z OneDrive", download, ft.Icons.CLOUD_DOWNLOAD_OUTLINED))
     out.append(secondary_button(p, f"Wyślij zmiany do OneDrive ({len(pending)})", upload,
                                 ft.Icons.CLOUD_UPLOAD_OUTLINED))
+    out.append(ft.Row([ft.TextButton(content="Zapisz plik zmian w innym miejscu…", on_click=save_elsewhere,
+                                     style=ft.ButtonStyle(color=p.muted))], alignment=ft.MainAxisAlignment.END))
     if pending:
         out.append(section(p, "Zmiany czekające na wysłanie"))
         out.append(card(p, ft.Column([txt("• " + sync.describe_op(op), 13, p.text) for op in pending[:30]],
@@ -116,15 +145,21 @@ def build(app: Any) -> List[ft.Control]:
     steps = [
         "Na komputerze: Ustawienia (9) › Synchronizacja z telefonem › ustaw folder w OneDrive i hasło.",
         "Na telefonie zainstaluj aplikację OneDrive i zaloguj się na to samo konto.",
-        "„Pobierz dane z OneDrive” › wybierz OneDrive › MatrixFinance › MatrixFinance.mfsync.",
-        "Dodawaj wydatki na telefonie. „Wyślij zmiany do OneDrive” › zapisz plik w tym samym folderze "
-        "(MatrixFinance).",
+        "„Pobierz dane z OneDrive” › w oknie wyboru plików otwórz menu (trzy kreski) lub „Przeglądaj” › OneDrive › "
+        "MatrixFinance › MatrixFinance.mfsync.",
+        "Dodawaj wydatki na telefonie. „Wyślij zmiany do OneDrive” › w oknie „Udostępnij” wybierz OneDrive › "
+        "folder MatrixFinance › Prześlij.",
         "Komputer dopisze zmiany automatycznie (po zalogowaniu, co 2 minuty, Ctrl+Y). Każda zmiana trafia na "
-        "komputer tylko raz — nawet gdy plik zapiszesz kilka razy.",
+        "komputer tylko raz — nawet gdy plik wyślesz kilka razy.",
     ]
     out.append(card(p, ft.Column([ft.Row([bold(f"{i}.", 14, p.accent), txt(s, 13, p.text, expand=True)],
                                           vertical_alignment=ft.CrossAxisAlignment.START)
                                   for i, s in enumerate(steps, 1)], spacing=10)))
+    out.append(card(p, ft.Column([
+        bold("Nie widzisz OneDrive przy pobieraniu?", 13, p.warning),
+        txt("Otwórz aplikację OneDrive › MatrixFinance › przy pliku MatrixFinance.mfsync „Więcej” (trzy kropki) › „Pobierz” (zapisze się "
+            "w Pobranych), a potem w Matrix Finance wybierz go z folderu Pobrane.", 12, p.text),
+    ], spacing=4)))
     out.append(banner(p, ft.Icons.LOCK_OUTLINE, "Pliki są szyfrowane hasłem synchronizacji (AES). Bez hasła nikt "
                       "nie odczyta Twoich danych z OneDrive.", p.accent_dim))
     return out

@@ -34,6 +34,7 @@ class MobileApp:
         self.subpage: Optional[str] = None  # "sync" | "settings" | "welcome"
         self.view_state: dict = {}  # filtry ekranów (np. wyszukiwanie transakcji)
         self.picker = ft.FilePicker()  # usługa systemowego wyboru plików (OneDrive przez dostawcę dokumentów)
+        self.share = ft.Share()  # systemowe „Udostępnij” — wysyłka pliku zmian prosto do aplikacji OneDrive
         self.body = self._new_body()
         self.root = ft.SafeArea(content=self.body, expand=True)
         self._screen_key: Optional[tuple] = None

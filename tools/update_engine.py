@@ -28,6 +28,7 @@ FILES = [
     "src/finance/envelopes.py",
     "src/finance/goals.py",
     "src/finance/ledger.py",
+    "src/finance/loans.py",
     "src/finance/recurring.py",
     "src/finance/storage.py",
     "src/finance/sync.py",

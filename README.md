@@ -15,7 +15,7 @@ Pobierz `MatrixFinance-<wersja>.apk` z zakładki **Releases** i otwórz go na te
 | **Pulpit** | do wydania w kopertach, bilans miesiąca, wydatki, majątek; koperty z paskami (zielony → żółty → czerwony), ostatnie wpisy, nadchodzące płatności, cele |
 | **Transakcje** | lista dzień po dniu, wyszukiwanie, filtr (wydatki / dochody / inne), edycja i usuwanie |
 | **Koperty** | ile zostało, wykorzystanie, koperty elastyczne (↻), wydatek z koperty, **korekty** („ustaw zostało”, dołóż, odejmij) i **przesuwanie między kopertami** |
-| **Konta** | majątek netto, konta wg grup, **przelewy**, **korekta salda** |
+| **Konta** | majątek netto, konta wg grup, **przelewy**, **korekta salda**; **kredyty i raty** (grupa Zobowiązania): rata, postęp spłaty, następna rata, nadpłata, „ile zostało” |
 | **Cele** | postęp, plan miesięczny, wpłata / wypłata, korekta stanu |
 | **+** | nowy wydatek/dochód: kwota, koperta (z informacją ile zostało), konto, sklep, data |
 
@@ -35,7 +35,7 @@ Motywy kolorów jak na komputerze (Matrix, Bursztyn, Cyber, Fiolet, Karmazyn, Mo
 1. **Komputer** (Matrix Finance 2.2.0+): *Ustawienia (9) → Synchronizacja z telefonem → Ustaw synchronizację* — folder w OneDrive (wykrywany automatycznie) i hasło.
 2. **Telefon**: zainstaluj aplikację OneDrive i zaloguj się na to samo konto.
 3. W aplikacji: *Synchronizacja → Pobierz dane z OneDrive* → OneDrive → `MatrixFinance` → `MatrixFinance.mfsync`, wpisz to samo hasło.
-4. Po zmianach na telefonie: *Wyślij zmiany do OneDrive* → zapisz w folderze `MatrixFinance`. Komputer dopisze zmiany automatycznie (po zalogowaniu, co 2 minuty, `Ctrl+Y`) i zapisze nową migawkę.
+4. Po zmianach na telefonie: *Wyślij zmiany do OneDrive* → w oknie **Udostępnij** wybierz **OneDrive** → folder `MatrixFinance` → *Prześlij*. Plik trafia prosto do chmury (nie do pamięci telefonu). Komputer dopisze zmiany automatycznie (po zalogowaniu, co 2 minuty, `Ctrl+Y`) i zapisze nową migawkę. Gdyby plik trafił do głównego folderu OneDrive, komputer też go znajdzie.
 
 Każda zmiana z telefonu (wydatek, dochód, edycja, usunięcie, przelew, wpłata/wypłata z celu, korekta salda, korekta i przesunięcie w kopertach) ma unikalny identyfikator — komputer stosuje ją **tylko raz**, nawet gdy plik zapiszesz kilka razy. Zmiana, której nie da się wykonać (np. cel usunięty na komputerze), wraca na telefon jako odrzucona z opisem. Dopóki komputer nie potwierdzi zmian, telefon pokazuje je jako „do wysłania” i nie traci ich przy pobieraniu danych.
 

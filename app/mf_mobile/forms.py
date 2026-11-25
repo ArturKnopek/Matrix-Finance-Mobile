@@ -217,6 +217,8 @@ def transfer_dialog(app: Any, source: Optional[str] = None, target: Optional[str
 
 def balance_dialog(app: Any, account: Dict[str, Any]) -> None:
     p, store = app.p, app.store
+    if getattr(account.get("kind"), "liability", False):  # kredyt: korekta = ile zostało do spłaty
+        return debt_dialog(app, account)
     current = float(account["balance"])
     value = field(p, "Rzeczywiste saldo", f"{current:.2f}".replace(".", ","), keyboard_type=ft.KeyboardType.NUMBER,
                   suffix=txt("zł", 16, p.muted), text_size=22, autofocus=True)
@@ -251,12 +253,52 @@ def balance_dialog(app: Any, account: Dict[str, Any]) -> None:
         primary_button(p, "Zapisz saldo", save, ft.Icons.CHECK)]))
 
 
+def debt_dialog(app: Any, account: Dict[str, Any]) -> None:
+    p, store = app.p, app.store
+    current = -float(account["balance"])
+    value = field(p, "Zostało do spłaty", f"{current:.2f}".replace(".", ","), keyboard_type=ft.KeyboardType.NUMBER,
+                  suffix=txt("zł", 16, p.muted), text_size=22, autofocus=True)
+
+    def save(e: Any) -> None:
+        v = parse_money(value.value or "")
+        if v is None or v < 0:
+            return _error(app, value, "Podaj kwotę długu (0 lub więcej)")
+        app.close()
+        app.run_action(lambda: store.set_balance(account["name"], -v), f"{account['name']}: do spłaty {money(v)}")
+
+    app.show(_sheet(app, f"Ile zostało: {account['name']}", [
+        txt(f"W aplikacji: do spłaty {money(current)}", 14, p.muted), value,
+        txt("Wpisz kwotę z harmonogramu banku / sklepu. Raty księguje komputer automatycznie.", 12, p.muted),
+        primary_button(p, "Zapisz", save, ft.Icons.CHECK)]))
+
+
 def account_actions(app: Any, account: Dict[str, Any]) -> None:
     p = app.p
 
     def go(fn: Callable) -> Callable:
         return lambda e: (app.close(), fn())
 
+    kind = account.get("kind")
+    if getattr(kind, "liability", False):
+        loan = account.get("loan") or {}
+        tiles = [
+            ft.ListTile(leading=ft.Icon(ft.Icons.SAVINGS_OUTLINED, color=p.accent), title=txt("Nadpłata"),
+                        subtitle=txt("przelew na konto kredytu — dług maleje", 12, p.muted),
+                        on_click=go(lambda: transfer_dialog(app, target=account["name"]))),
+            ft.ListTile(leading=ft.Icon(ft.Icons.TUNE, color=p.accent), title=txt("Ile zostało do spłaty"),
+                        on_click=go(lambda: debt_dialog(app, account))),
+        ]
+        info = []
+        if loan.get("next_due"):
+            info.append(f"następna rata {loan['next_due']:%d.%m.%Y}: {money(loan['payment'])}")
+        if loan.get("installments"):
+            info.append(f"zapłacono {loan['paid']} z {loan['installments']} rat")
+        app.show(_sheet(app, account["name"], [
+            txt(getattr(kind, "label", ""), 13, p.muted),
+            bold(f"Do spłaty {money(-float(account['balance']))}", 24, p.negative if account["balance"] < 0
+                 else p.positive),
+            *([txt(" · ".join(info), 13, p.text)] if info else []), *tiles]))
+        return
     tiles = [
         ft.ListTile(leading=ft.Icon(ft.Icons.SWAP_HORIZ, color=p.accent), title=txt("Przelew z tego konta"),
                     on_click=go(lambda: transfer_dialog(app, source=account["name"]))),
@@ -266,7 +308,6 @@ def account_actions(app: Any, account: Dict[str, Any]) -> None:
                     subtitle=txt("ustaw saldo zgodne z bankiem", 12, p.muted),
                     on_click=go(lambda: balance_dialog(app, account))),
     ]
-    kind = account.get("kind")
     app.show(_sheet(app, account["name"], [
         txt(f"{getattr(kind, 'label', '')} · {account.get('institution') or ''}".strip(" ·"), 13, p.muted),
         bold(money(float(account["balance"])), 26, p.text), *tiles]))

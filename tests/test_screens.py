@@ -99,3 +99,15 @@ def test_transaction_list_filters(demo_app):
     assert len(store.transactions(search="biedronka")) <= len(all_rows)
     demo_app.view_state["transactions"] = {"search": "zzz-brak", "kind": "all"}
     assert transactions.build(demo_app)  # pusty wynik -> komunikat „Nic nie znaleziono”
+
+
+def test_loan_account_on_phone(demo_app):
+    app, store = demo_app, demo_app.store
+    loan = next(a for a in store.accounts() if a["kind"].liability)
+    assert loan["balance"] < 0 and loan["loan"]["payment"] == 150
+    forms.account_actions(app, loan)
+    forms.balance_dialog(app, loan)  # dla kredytu: „ile zostało do spłaty”
+    assert len(app.shown) == 2
+    assert any(u.get("loan") == loan["name"] for u in store.upcoming(days=40))
+    store.set_balance(loan["name"], -900)
+    assert next(a for a in store.accounts() if a["name"] == loan["name"])["balance"] == -900

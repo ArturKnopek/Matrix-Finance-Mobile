@@ -102,7 +102,7 @@ class Store:
         s = env_api.get_budget_summary(self.ym)
         nw = acc_api.get_net_worth()
         return {**s, "balance": s["income"] - s["expense"], "net_worth": nw["total"], "liquid": nw["liquid"],
-                "goals": nw["goals"]}
+                "goals": nw["goals"], "debt": nw.get("debt", 0.0)}
 
     def envelopes(self, only_active: bool = True) -> List[Dict[str, Any]]:
         out = []
@@ -266,6 +266,11 @@ class Store:
                 day = min(28, rnd.randint(1, max(1, today.day)))
                 ledger.add_transaction(f"{ym}-{day:02d}", TYPE_EXPENSE, cat, rnd.choice(["Karta", "Karta", "Revolut"]),
                                        rnd.choice(names), round(rnd.uniform(low, high), 2), "", True)
+        from src.finance import loans
+
+        loans.open_loan("Ekspres na raty", 1500, 10, (today.replace(day=1) - timedelta(days=40)).isoformat(),
+                        "Karta", 0.0, category="Raty", day=(today - timedelta(days=45)).isoformat())
+        loans.process_due_installments(today)
         goals_api.update_piggy_bank_balance(1, 1800, "Karta", True)
         goals_api.update_piggy_bank_balance(2, 4200, "Karta", True)
         self.ym = ym
