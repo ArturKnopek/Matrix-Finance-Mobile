@@ -28,7 +28,7 @@ def onedrive_section(app: Any, password_ok: Any) -> List[ft.Control]:
             app.toast("Synchronizuję z OneDrive…")
             app.background_sync(upload_only=False, quiet=False)
 
-        folder = field(p, "Folder w OneDrive", od.folder, dense=True, expand=True)
+        folder = field(p, "Folder w OneDrive (zapamiętany)", od.folder, dense=True)
 
         def change_folder(e: Any) -> None:
             od.set_folder(folder.value or "")
@@ -55,13 +55,16 @@ def onedrive_section(app: Any, password_ok: Any) -> List[ft.Control]:
         rows.append(ft.Row([
             ft.Switch(value=od.auto, active_color=p.accent,
                       on_change=lambda e: (od.set_auto(e.control.value), app.render())),
-            txt("Automatycznie: przy uruchomieniu i po każdej zmianie", 13, p.text, expand=True)]))
+            ft.Container(txt("Automatycznie: przy uruchomieniu i po każdej zmianie", 13, p.text), expand=True)],
+            vertical_alignment=ft.CrossAxisAlignment.CENTER))
         out.append(card(p, ft.Column(rows, spacing=6), highlight=True))
         out.append(primary_button(p, "Synchronizuj teraz", sync_click, ft.Icons.SYNC))
-        out.append(ft.Row([folder, ft.TextButton(content="Zapamiętaj", on_click=change_folder,
-                                                 style=ft.ButtonStyle(color=p.accent))]))
-        out.append(ft.Row([ft.TextButton(content="Rozłącz OneDrive", on_click=disconnect,
-                                         style=ft.ButtonStyle(color=p.muted))], alignment=ft.MainAxisAlignment.END))
+        out.append(folder)
+        out.append(ft.Row([ft.TextButton(content="Zapamiętaj folder", icon=ft.Icons.BOOKMARK_ADDED_OUTLINED,
+                                         on_click=change_folder, style=ft.ButtonStyle(color=p.accent)),
+                           ft.TextButton(content="Rozłącz OneDrive", on_click=disconnect,
+                                         style=ft.ButtonStyle(color=p.muted))],
+                          alignment=ft.MainAxisAlignment.SPACE_BETWEEN, wrap=True))
         return out
 
     client = field(p, "Identyfikator aplikacji (Client ID)", od.client_id, dense=True, expand=True)

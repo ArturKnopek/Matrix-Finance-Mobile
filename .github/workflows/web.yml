@@ -69,5 +69,14 @@ jobs:
       - uses: actions/configure-pages@v5
         with:
           enablement: true
+      - name: Podpowiedź — strona nie jest włączona
+        if: failure()
+        run: |
+          echo "::error::GitHub Pages nie jest włączone. Jednorazowo: Settings → Pages → Build and deployment → Source: GitHub Actions, potem uruchom ten workflow ponownie."
+          {
+            echo "### GitHub Pages nie jest włączone"
+            echo "Jednorazowo: **Settings → Pages → Build and deployment → Source: GitHub Actions**,"
+            echo "potem **Actions → iPhone (wersja webowa) → Run workflow** (albo *Re-run jobs*)."
+          } >> "$GITHUB_STEP_SUMMARY"
       - id: deployment
         uses: actions/deploy-pages@v4

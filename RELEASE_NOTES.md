@@ -1,5 +1,8 @@
 ## Matrix Finance Mobile — Android
 
+**Nowe w 1.2.1:** poprawiony układ ekranu Synchronizacja na wąskich telefonach (opis przełącznika
+„Automatycznie” i przycisk „Zapamiętaj folder” nie są już ucinane).
+
 **Nowe w 1.2:** OneDrive **bez wybierania plików** — połączenie z kontem Microsoft raz, zapamiętana lokalizacja
 („Obecna lokalizacja: OneDrive › MatrixFinance”), zapis zawsze do tego samego pliku, synchronizacja automatyczna
 (przy uruchomieniu i po każdej zmianie) albo przyciskiem. Wymaga jednorazowo identyfikatora aplikacji (Client ID) —
@@ -21,9 +24,13 @@ Android zapyta o zgodę na instalację z tego źródła (np. z przeglądarki lub
 * motywy kolorów jak w programie na komputerze, dane przykładowe do wypróbowania.
 
 **Synchronizacja z komputerem (OneDrive)**
-1. Na komputerze (Matrix Finance 2.2.0 lub nowszy): Ustawienia → Synchronizacja z telefonem → folder w OneDrive + hasło.
-2. Na telefonie: aplikacja OneDrive zalogowana na to samo konto.
-3. W aplikacji: Synchronizacja → „Pobierz dane z OneDrive” → OneDrive → MatrixFinance → `MatrixFinance.mfsync`.
-4. Po zmianach na telefonie: „Wyślij zmiany do OneDrive” → w oknie „Udostępnij” wybierz OneDrive → folder MatrixFinance → Prześlij. Komputer dopisze zmiany sam.
+1. Na komputerze (Matrix Finance 2.3.0): Ustawienia → Synchronizacja z telefonem → folder w OneDrive + hasło.
+2. Na telefonie: Synchronizacja → wpisz to samo hasło.
+3. **Zalecane — bez wybierania plików:** wklej identyfikator aplikacji (Client ID, instrukcja w aplikacji) →
+   „Połącz z OneDrive” → zaloguj się kodem. Od teraz telefon pamięta lokalizację (widać ją jako
+   „Obecna lokalizacja: OneDrive › MatrixFinance”), sam pobiera dane z komputera i zapisuje swoje zmiany —
+   przy uruchomieniu, po każdej zmianie albo przyciskiem „Synchronizuj teraz”.
+4. **Ręcznie (bez Client ID):** „Pobierz dane z OneDrive” → OneDrive → MatrixFinance → `MatrixFinance.mfsync`;
+   po zmianach „Wyślij zmiany do OneDrive” → „Udostępnij” → OneDrive → folder MatrixFinance → Prześlij.
 
 Pliki synchronizacji są szyfrowane (AES) hasłem synchronizacji. Zalecany Android 9 lub nowszy.

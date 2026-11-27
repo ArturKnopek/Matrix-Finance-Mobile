@@ -47,6 +47,7 @@ Apple nie pozwala instalować aplikacji spoza App Store bez płatnego konta dewe
 * **Dane** zostają na iPhonie (w pamięci tej aplikacji z ekranu początkowego) i są zapisywane po każdej zmianie.
 * **Synchronizacja z komputerem — ręcznie:** *Pobierz dane z OneDrive* otwiera aplikację **Pliki** (wybierz OneDrive → MatrixFinance → MatrixFinance.mfsync), *Wyślij zmiany do OneDrive* otwiera *Udostępnij* → **Zachowaj w Plikach** → OneDrive → MatrixFinance. (Aplikacja OneDrive musi być zainstalowana — wtedy jest widoczna w Plikach.)
 * Pierwsze uruchomienie trwa dłużej (pobiera się środowisko Pythona, potem jest w pamięci podręcznej).
+* **Publikacja strony (jednorazowo, właściciel repozytorium):** Settings → Pages → *Build and deployment* → Source: **GitHub Actions**, potem Actions → „iPhone (wersja webowa)” → *Run workflow*. Każde kolejne uruchomienie (lub tag `v*`) aktualizuje stronę.
 * Alternatywa dla zaawansowanych: wersja natywna przez AltStore/SideStore (darmowe Apple ID, odnawianie co 7 dni) — możliwa, ale wymaga komputera; wersja przeglądarkowa jest prostsza.
 
 ## Synchronizacja z komputerem przez OneDrive (ręcznie)
