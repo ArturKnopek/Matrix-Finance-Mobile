@@ -6,15 +6,23 @@ from typing import Any, List
 
 import flet as ft
 
-from mf_mobile.store import plural
+from mf_mobile.store import BACKUP_NAME, plural
 from mf_mobile.ui import banner, bold, card, field, primary_button, secondary_button, section, txt
 from src.finance import sync
 
 
 def onedrive_section(app: Any, password_ok: Any) -> List[ft.Control]:
-    """OneDrive bez wybierania plików: logowanie raz, zapamiętany folder, zawsze ten sam plik."""
+    """OneDrive bez wybierania plików: logowanie raz, zapamiętany folder, zawsze ten sam plik.
+
+    Z komputerem: pobiera dane komputera i zapisuje plik zmian. Bez komputera: zapisuje kopię zapasową."""
     p, store, od = app.p, app.store, app.onedrive
-    out: List[ft.Control] = [section(p, "OneDrive — bez wybierania plików (zalecane)")]
+    solo = store.is_solo
+    out: List[ft.Control] = [section(p, "Kopia automatyczna w OneDrive" if solo
+                                     else "OneDrive — bez wybierania plików (zalecane)")]
+    if app.web and solo:
+        out.append(card(p, txt("W wersji przeglądarkowej (iPhone) kopię zapisujesz ręcznie — przyciskiem niżej "
+                               "(Udostępnij › Zachowaj w Plikach › OneDrive).", 13, p.text)))
+        return out
     if app.web:
         out.append(card(p, txt("W wersji przeglądarkowej (iPhone) synchronizacja działa ręcznie: „Pobierz dane” "
                                "wybiera plik w aplikacji Pliki (OneDrive), a „Wyślij zmiany” — przez Udostępnij.",
@@ -25,8 +33,8 @@ def onedrive_section(app: Any, password_ok: Any) -> List[ft.Control]:
         def sync_click(e: Any) -> None:
             if not password_ok():
                 return
-            app.toast("Synchronizuję z OneDrive…")
-            app.background_sync(upload_only=False, quiet=False)
+            app.toast("Zapisuję kopię w OneDrive…" if solo else "Synchronizuję z OneDrive…")
+            app.background_sync(upload_only=False, quiet=False, force=solo)
 
         folder = field(p, "Folder w OneDrive (zapamiętany)", od.folder, dense=True)
 
@@ -45,20 +53,26 @@ def onedrive_section(app: Any, password_ok: Any) -> List[ft.Control]:
                                                                                   p.text, expand=True)]),
             txt("Obecna lokalizacja:", 12, p.muted),
             bold(od.location(), 16, p.accent),
-            txt(f"Plik zmian telefonu: {od.ops_name()} — zawsze ten sam, zastępowany przy wysłaniu. "
+            txt(f"Plik kopii: {BACKUP_NAME} — zawsze ten sam, zastępowany (OneDrive przechowuje też poprzednie "
+                "wersje)." if solo else
+                f"Plik zmian telefonu: {od.ops_name()} — zawsze ten sam, zastępowany przy wysłaniu. "
                 f"Dane z komputera: {sync.SNAPSHOT_FILE}.", 12, p.muted),
-            txt(f"Ostatnia synchronizacja: {sync.format_stamp(last)}" if last else "Jeszcze nie synchronizowano.", 12,
-                p.muted),
+            txt((f"Ostatnia kopia: {sync.format_stamp(store.backup_at)}" if store.backup_at else
+                 "Jeszcze nie zapisano kopii.") if solo else
+                (f"Ostatnia synchronizacja: {sync.format_stamp(last)}" if last else "Jeszcze nie synchronizowano."),
+                12, p.muted),
         ]
         if app.sync_status:
             rows.append(txt(app.sync_status, 12, p.warning if "błąd" in app.sync_status.lower() else p.text))
         rows.append(ft.Row([
             ft.Switch(value=od.auto, active_color=p.accent,
                       on_change=lambda e: (od.set_auto(e.control.value), app.render())),
-            ft.Container(txt("Automatycznie: przy uruchomieniu i po każdej zmianie", 13, p.text), expand=True)],
+            ft.Container(txt("Automatycznie: po każdej zmianie" if solo else
+                             "Automatycznie: przy uruchomieniu i po każdej zmianie", 13, p.text), expand=True)],
             vertical_alignment=ft.CrossAxisAlignment.CENTER))
         out.append(card(p, ft.Column(rows, spacing=6), highlight=True))
-        out.append(primary_button(p, "Synchronizuj teraz", sync_click, ft.Icons.SYNC))
+        out.append(primary_button(p, "Zapisz kopię teraz" if solo else "Synchronizuj teraz", sync_click,
+                                  ft.Icons.BACKUP_OUTLINED if solo else ft.Icons.SYNC))
         out.append(folder)
         out.append(ft.Row([ft.TextButton(content="Zapamiętaj folder", icon=ft.Icons.BOOKMARK_ADDED_OUTLINED,
                                          on_click=change_folder, style=ft.ButtonStyle(color=p.accent)),
@@ -119,7 +133,7 @@ def onedrive_section(app: Any, password_ok: Any) -> List[ft.Control]:
                         app.close()
                         app.render()
                         app.toast(f"Połączono z OneDrive ({od.account}). Lokalizacja: {od.location()}")
-                        app.background_sync(upload_only=False, quiet=False)
+                        app.background_sync(upload_only=False, quiet=False, force=solo)
                         return
                 except Exception as err:
                     app.close()
@@ -137,7 +151,9 @@ def onedrive_section(app: Any, password_ok: Any) -> List[ft.Control]:
         "Skopiuj „Identyfikator aplikacji (klienta)” i wklej poniżej (robisz to tylko raz).",
     ]
     out.append(card(p, ft.Column([
-        txt("Połącz raz z kontem Microsoft — potem telefon sam zapisuje i pobiera pliki w folderze "
+        txt(f"Połącz raz z kontem Microsoft — potem telefon sam zapisuje kopię w folderze OneDrive › {od.folder} "
+            "po każdej zmianie, bez pytania o lokalizację." if solo else
+            "Połącz raz z kontem Microsoft — potem telefon sam zapisuje i pobiera pliki w folderze "
             f"OneDrive › {od.folder}, bez pytania o lokalizację (plik zmian jest zawsze ten sam).", 13, p.text),
         *([] if od.client_id else [
             bold("Najpierw jednorazowo: identyfikator aplikacji", 13, p.warning),

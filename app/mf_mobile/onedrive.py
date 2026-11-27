@@ -6,6 +6,7 @@ Bezpośrednie połączenie z OneDrive (Microsoft Graph) — bez wybierania plik�
 * Zapamiętany folder (domyślnie „MatrixFinance” — ten sam, co na komputerze):
     - pobiera  OneDrive/<folder>/MatrixFinance.mfsync   (dane z komputera),
     - zapisuje OneDrive/<folder>/telefon-XXXXXX.mfops   (zawsze ten sam plik — nadpisywany).
+* Tryb „Bez komputera”: zapisuje OneDrive/<folder>/MatrixFinance-kopia.mfx (kopia zapasowa, nadpisywana).
 * Wymaga identyfikatora aplikacji (Client ID) z rejestracji w Microsoft Entra (instrukcja w README):
   wpisanego w Ustawieniach synchronizacji albo wbudowanego w pliku onedrive_client_id.txt.
 
@@ -24,6 +25,8 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Tuple
 
 from src.finance import sync
+
+BACKUP_NAME = "MatrixFinance-kopia.mfx"  # kopia zapasowa w trybie bez komputera (= store.BACKUP_NAME)
 
 GRAPH = "https://graph.microsoft.com/v1.0"
 LOGIN = "https://login.microsoftonline.com/{tenant}/oauth2/v2.0"
@@ -62,8 +65,11 @@ class SyncReport:
     rejected: list = None  # type: ignore[assignment]
     snapshot_at: str = ""
     missing_snapshot: bool = False
+    backup: str = ""  # tryb bez komputera: "saved" | "unchanged"
 
     def text(self) -> str:
+        if self.backup:
+            return "kopia zapisana" if self.backup == "saved" else "kopia aktualna"
         parts = []
         if self.uploaded:
             parts.append(f"wysłano zmian: {self.uploaded}")
@@ -245,9 +251,28 @@ class OneDrive:
 
     # ------------------------------------------------------------------ synchronizacja
 
+    def backup_now(self, force: bool = False) -> SyncReport:
+        """Bez komputera: zapisuje kopię zapasową (zawsze ten sam plik, nadpisywany) — tylko gdy dane się zmieniły."""
+        store = self.store
+        report = SyncReport(rejected=[], backup="unchanged")
+        if force or store.backup_needed:
+            self.upload(BACKUP_NAME, store.backup_bytes())
+            store.mark_backup()
+            report.backup = "saved"
+        store.set_setting(SET_LAST, sync.now_iso())
+        return report
+
+    def download_backup(self) -> bytes:
+        raw = self.download(BACKUP_NAME)
+        if raw is None:
+            raise OneDriveError(f"Nie ma kopii {BACKUP_NAME} w {self.location()}.")
+        return raw
+
     def sync_now(self, upload_only: bool = False) -> SyncReport:
         """Wysyła zmiany telefonu (nadpisując jego plik) i pobiera dane z komputera."""
         store = self.store
+        if getattr(store, "is_solo", False):  # bez komputera: OneDrive przechowuje kopię zapasową
+            return self.backup_now()
         report = SyncReport(rejected=[])
         if not store.password:
             raise OneDriveError("Ustaw hasło synchronizacji (to samo co na komputerze).")

@@ -1,6 +1,6 @@
 [project]
 name = "matrix-finance-mobile"
-version = "1.2.1"
+version = "1.3.0"
 description = "Matrix Finance — budżet domowy z oszczędzaniem kopertowym (Android), synchronizacja z komputerem przez OneDrive"
 readme = "README.md"
 requires-python = ">=3.12"

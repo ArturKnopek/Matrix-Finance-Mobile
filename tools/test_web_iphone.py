@@ -85,6 +85,26 @@ with sync_playwright() as p:
     assert not any("Wypróbuj na danych przykładowych" in t for t in found), "dane nie zostały zapamiętane"
     print("PO PONOWNYM OTWARCIU: dane zachowane ✓")
     page.screenshot(path=str(OUT / "4_po_ponownym_otwarciu.png"))
+
+    # tryb „Bez komputera” na czystym iPhonie (nowa pamięć przeglądarki)
+    ctx2 = browser.new_context(**p.devices["iPhone 15"])
+    page = ctx2.new_page()
+    page.on("console", on_console)
+    page.on("pageerror", lambda e: (errors.append(str(e)), console.append(f"[pageerror] {e}")))
+    page.goto(URL, wait_until="load")
+    wait_for_text(page, "Zacznij — bez komputera")
+    tap(page, "Zacznij — bez komputera")
+    found = wait_for_text(page, "Pierwsze kroki")
+    print("BEZ KOMPUTERA — PULPIT:", [t for t in found if len(t) < 70][:12])
+    page.screenshot(path=str(OUT / "5_bez_komputera.png"))
+    tap(page, "Kopia zapasowa")
+    found = wait_for_text(page, "Zapisz kopię")
+    print("KOPIA ZAPASOWA:", [t for t in found if len(t) < 70][:12])
+    page.screenshot(path=str(OUT / "6_kopia_zapasowa.png"))
+    page.reload(wait_until="load")
+    found = wait_for_text(page, "Pierwsze kroki")
+    assert not any("Zacznij — bez komputera" in t for t in found), "tryb bez komputera nie został zapamiętany"
+    print("BEZ KOMPUTERA PO PONOWNYM OTWARCIU: zachowane ✓")
     browser.close()
 
 python_errors = [e for e in errors if "Traceback" in e or "Error" in e and "favicon" not in e]

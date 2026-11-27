@@ -30,7 +30,13 @@ class StubApp:
         self.web = False
         self.sync_status = ""
 
-    def background_sync(self, upload_only=False, quiet=False): pass
+    def background_sync(self, upload_only=False, quiet=False, force=False): pass
+
+    def backup_reminder(self):
+        return self.store.is_solo and self.store.backup_needed
+
+    def process_due(self, quiet=True):
+        return self.store.process_due()[0]
 
     def render(self): pass
     def go_tab(self, index): pass

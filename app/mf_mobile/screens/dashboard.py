@@ -17,8 +17,15 @@ def build(app: Any) -> List[ft.Control]:
     out: List[ft.Control] = []
 
     if store.is_demo:
-        out.append(banner(p, ft.Icons.SCIENCE_OUTLINED, "Dane przykładowe — połącz z komputerem, aby pracować "
-                          "na swoich danych.", p.warning, "Połącz", lambda e: app.open_subpage("sync")))
+        out.append(banner(p, ft.Icons.SCIENCE_OUTLINED, "Dane przykładowe. Swoje dane: Ustawienia › Tryb pracy.",
+                          p.warning, "Ustawienia", lambda e: app.open_subpage("settings")))
+    if app.backup_reminder():
+        age = store.backup_age_days()
+        out.append(banner(p, ft.Icons.BACKUP_OUTLINED, "Zrób kopię zapasową danych" + (
+            f" — ostatnia {age} dni temu." if age is not None else " — jeszcze żadnej nie ma."), p.warning, "Kopia",
+            lambda e: app.open_subpage("sync")))
+    if store.is_solo:
+        out += _first_steps(app)
     pending = store.pending()
     if pending:
         out.append(banner(p, ft.Icons.CLOUD_UPLOAD_OUTLINED,
@@ -46,7 +53,8 @@ def build(app: Any) -> List[ft.Control]:
             ], spacing=6))
         out.append(card(p, ft.Column(rows, spacing=14)))
     else:
-        out.append(card(p, txt("Brak budżetów w kopertach — ustawisz je na komputerze.", 13, p.muted)))
+        out.append(card(p, txt("Brak budżetów w kopertach — ustaw je w zakładce Koperty." if store.can_manage else
+                               "Brak budżetów w kopertach — ustawisz je na komputerze.", 13, p.muted)))
 
     recent = store.transactions(limit=5)
     out.append(section(p, "Ostatnie wpisy", "Wszystkie", lambda e: app.go_tab(1)))
@@ -65,8 +73,13 @@ def build(app: Any) -> List[ft.Control]:
         out.append(card(p, txt("Brak wpisów w tym miesiącu. Dodaj wydatek przyciskiem +.", 13, p.muted)))
 
     upcoming = store.upcoming()
+    if upcoming or store.is_solo:
+        out.append(section(p, "Nadchodzące płatności" + ("" if store.is_solo else " (z komputera)"),
+                           *(("Zarządzaj", lambda e: app.open_subpage("recurring")) if store.is_solo else ())))
+    if not upcoming and store.is_solo:
+        out.append(card(p, txt("Brak płatności w najbliższych 14 dniach. Stałe płatności (czynsz, rachunki, pensja) "
+                               "dodasz w „Zarządzaj”.", 13, p.muted)))
     if upcoming:
-        out.append(section(p, "Nadchodzące płatności (z komputera)"))
         rows = []
         for r in upcoming[:4]:
             when = "dziś" if r["days"] <= 0 else ("jutro" if r["days"] == 1 else f"za {r['days']} dni")
@@ -91,3 +104,31 @@ def _open(app: Any, tx: dict) -> None:
         forms.transaction_sheet(app, tx)
     else:
         forms.transaction_details(app, tx)
+
+
+def _first_steps(app: Any) -> List[ft.Control]:
+    """Bez komputera: pierwsze kroki, dopóki nie ustawiono budżetów i nie ma wpisów."""
+    p, store = app.p, app.store
+    has_budget = any(e["budget"] > 0 for e in store.envelopes(only_active=False))
+    has_tx = bool(store.transactions(limit=1))
+    has_balance = any(abs(a["balance"]) > 0 for a in store.accounts())
+    if has_budget and has_tx:
+        return []
+    steps = [
+        (has_balance, "Ustaw salda kont (Konta › dotknij konto › Korekta salda) lub dodaj swoje konta.",
+         "Konta", lambda e: app.go_tab(3)),
+        (has_budget, "Ustaw budżety kopert na miesiąc (Koperty › dotknij kopertę › Edytuj).", "Koperty",
+         lambda e: app.go_tab(2)),
+        (bool(store.recurring()), "Dodaj stałe płatności: czynsz, rachunki, subskrypcje, pensję.", "Dodaj",
+         lambda e: app.open_subpage("recurring")),
+        (has_tx, "Zapisuj wydatki przyciskiem +.", None, None),
+    ]
+    rows: List[ft.Control] = [bold("Pierwsze kroki", 15, p.accent)]
+    for done, text, action, handler in steps:
+        row: List[ft.Control] = [ft.Icon(ft.Icons.CHECK_CIRCLE if done else ft.Icons.RADIO_BUTTON_UNCHECKED,
+                                         color=p.positive if done else p.muted, size=20),
+                                 txt(text, 13, p.text if not done else p.muted, expand=True)]
+        if action and not done:
+            row.append(ft.TextButton(content=action, on_click=handler, style=ft.ButtonStyle(color=p.accent)))
+        rows.append(ft.Row(row, spacing=8))
+    return [card(p, ft.Column(rows, spacing=8), highlight=True)]

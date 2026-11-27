@@ -15,7 +15,9 @@ def build(app: Any) -> List[ft.Control]:
     p, store = app.p, app.store
     goals = store.goals()
     if not goals:
-        return [empty(p, "Brak celów oszczędnościowych.\nCele dodasz na komputerze.", ft.Icons.SAVINGS_OUTLINED)]
+        return [empty(p, "Brak celów oszczędnościowych.\n" + (
+            "Dodaj pierwszy cel przyciskiem +." if store.can_manage else "Cele dodasz na komputerze."),
+            ft.Icons.SAVINGS_OUTLINED)]
     total = sum(float(g["current_amount"] or 0) for g in goals)
     out: List[ft.Control] = [card(p, ft.Row([txt("Odłożone na cele", 13, p.muted, expand=True),
                                             bold(money(total), 20, p.accent)]), highlight=True)]
@@ -35,5 +37,6 @@ def build(app: Any) -> List[ft.Control]:
                     txt(f"brakuje {money(g['missing'])}" if g["missing"] > 0 else "osiągnięty ✓", 12, p.muted)]),
             *([txt(" · ".join(plan), 12, p.warning if g.get("overdue") else p.muted)] if plan else []),
         ], spacing=8), on_click=lambda e, goal=g: forms.goal_actions(app, goal)))
-    out.append(txt("Dotknij cel: wpłata, wypłata, korekta stanu.", 12, p.muted))
+    out.append(txt("Dotknij cel: wpłata, wypłata, korekta stanu" + (", edycja, usunięcie." if store.can_manage
+                                                                  else "."), 12, p.muted))
     return out

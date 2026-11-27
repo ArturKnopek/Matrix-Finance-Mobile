@@ -24,6 +24,7 @@ TABS = [
     ("Cele", ft.Icons.SAVINGS_OUTLINED, ft.Icons.SAVINGS),
 ]
 MONTH_TABS = {0, 1, 2}  # ekrany zależne od miesiąca
+BACKUP_DELAY = 15  # s — kopia w OneDrive po serii zmian (bez komputera)
 
 
 class MobileApp:
@@ -32,7 +33,7 @@ class MobileApp:
         self.store = Store()
         self.p: Palette = palette(self.store.theme)
         self.tab = 0
-        self.subpage: Optional[str] = None  # "sync" | "settings" | "welcome"
+        self.subpage: Optional[str] = None  # "sync" | "settings" | "recurring" | "welcome"
         self.view_state: dict = {}  # filtry ekranów (np. wyszukiwanie transakcji)
         self.picker = ft.FilePicker()  # usługa systemowego wyboru plików (OneDrive przez dostawcę dokumentów)
         self.share = ft.Share()  # systemowe „Udostępnij” — wysyłka pliku zmian prosto do aplikacji OneDrive
@@ -45,6 +46,7 @@ class MobileApp:
         self.onedrive = OneDrive(self.store)
         self._sync_lock = threading.Lock()
         self.sync_status = ""  # komunikat ostatniej automatycznej synchronizacji
+        self._backup_scheduled = False
         self.body = self._new_body()
         self.root = ft.SafeArea(content=self.body, expand=True)
         self._screen_key: Optional[tuple] = None
@@ -66,8 +68,33 @@ class MobileApp:
         if not self.store.has_data and not self.onedrive.connected:
             self.subpage = "welcome"
         self.render()
+        if self.store.is_solo:  # bez komputera: telefon sam księguje zlecenia, raty i lokaty
+            self.process_due(quiet=False)
         if self.can_auto_sync():
             self.background_sync(upload_only=False, quiet=True)
+
+    def process_due(self, quiet: bool = True) -> int:
+        try:
+            count, settled = self.store.process_due()
+        except Exception:
+            log.exception("Błąd księgowania zaległych płatności")
+            return 0
+        if count or settled:
+            self.render()
+            if not quiet:
+                parts = [f"Zaksięgowano stałe płatności i raty: {count}."] if count else []
+                self.toast(" ".join(parts + settled))
+        return count
+
+    def backup_reminder(self) -> bool:
+        """Bez komputera: przypomnienie o kopii, gdy nie zapisuje się sama, a dane się zmieniły (≥ 7 dni)."""
+        store = self.store
+        if not store.is_solo or self.can_auto_sync() or not store.backup_needed:
+            return False
+        age = store.backup_age_days()
+        if age is None:  # jeszcze żadnej kopii — przypominamy, gdy jest już co chronić
+            return bool(store.transactions(limit=1)) or len(store.accounts()) > 2
+        return age >= 7
 
     def apply_theme(self, name: str, render: bool = True) -> None:
         self.store.set_theme(name)
@@ -122,12 +149,18 @@ class MobileApp:
             self.page.floating_action_button = None
             self.body.controls = welcome.build(self)
             return
-        if self.subpage in ("sync", "settings"):
-            title = "Synchronizacja" if self.subpage == "sync" else "Ustawienia"
+        if self.subpage in ("sync", "settings", "recurring"):
+            from mf_mobile.screens import backup_screen, recurring_screen
+
+            solo = self.store.is_solo
+            title, builder = {
+                "sync": ("Kopia zapasowa", backup_screen.build) if solo else ("Synchronizacja", sync_screen.build),
+                "settings": ("Ustawienia", settings.build),
+                "recurring": ("Stałe płatności", recurring_screen.build),
+            }[self.subpage]
             self.page.appbar = self._appbar(title, back=True)
             self.page.navigation_bar = None
             self.page.floating_action_button = None
-            builder = sync_screen.build if self.subpage == "sync" else settings.build
             self.body.controls = builder(self)
             return
         self.page.appbar = self._appbar(TABS[self.tab][0])
@@ -146,10 +179,17 @@ class MobileApp:
     def _appbar(self, title: str, back: bool = False) -> ft.AppBar:
         p = self.p
         pending = len(self.store.pending())
-        sync_icon = ft.IconButton(
-            icon=ft.Icons.SYNC, icon_color=p.warning if pending else p.accent, tooltip="Synchronizacja",
-            badge=ft.Badge(label=str(pending), bgcolor=p.warning, text_color=p.on_accent) if pending else None,
-            on_click=lambda e: self.open_subpage("sync"))
+        if self.store.is_solo:  # bez komputera: kopia zapasowa zamiast synchronizacji
+            remind = self.backup_reminder()
+            sync_icon = ft.IconButton(
+                icon=ft.Icons.BACKUP_OUTLINED, icon_color=p.warning if remind else p.accent, tooltip="Kopia zapasowa",
+                badge=ft.Badge(label="!", bgcolor=p.warning, text_color=p.on_accent) if remind else None,
+                on_click=lambda e: self.open_subpage("sync"))
+        else:
+            sync_icon = ft.IconButton(
+                icon=ft.Icons.SYNC, icon_color=p.warning if pending else p.accent, tooltip="Synchronizacja",
+                badge=ft.Badge(label=str(pending), bgcolor=p.warning, text_color=p.on_accent) if pending else None,
+                on_click=lambda e: self.open_subpage("sync"))
         actions: List[ft.Control] = []
         if not back:
             actions = [sync_icon, ft.IconButton(icon=ft.Icons.SETTINGS_OUTLINED, icon_color=p.muted,
@@ -177,7 +217,12 @@ class MobileApp:
             return ft.FloatingActionButton(icon=ft.Icons.SWAP_HORIZ, bgcolor=p.accent, foreground_color=p.on_accent,
                                            tooltip="Przelew", on_click=lambda e: forms.transfer_dialog(self))
         if self.tab == 4:
-            return None
+            if not self.store.can_manage:
+                return None
+            from mf_mobile import manage
+
+            return ft.FloatingActionButton(icon=ft.Icons.ADD, bgcolor=p.accent, foreground_color=p.on_accent,
+                                           tooltip="Nowy cel", on_click=lambda e: manage.goal_sheet(self))
         return ft.FloatingActionButton(icon=ft.Icons.ADD, bgcolor=p.accent, foreground_color=p.on_accent,
                                        tooltip="Nowy wydatek", on_click=lambda e: forms.transaction_sheet(self))
 
@@ -262,13 +307,27 @@ class MobileApp:
         return (not self.web and od.connected and od.auto and bool(self.store.password)
                 and not self.store.is_demo)
 
-    def background_sync(self, upload_only: bool = False, quiet: bool = False) -> None:
-        """Synchronizacja z zapamiętanym folderem OneDrive w osobnym wątku (bez blokowania ekranu)."""
+    def background_sync(self, upload_only: bool = False, quiet: bool = False, force: bool = False) -> None:
+        """Synchronizacja z zapamiętanym folderem OneDrive w osobnym wątku (bez blokowania ekranu).
+
+        Bez komputera: zapis kopii zapasowej; po zwykłej zmianie z opóźnieniem (kilka zmian = jedna kopia)."""
+        solo = self.store.is_solo
+        if solo and quiet and upload_only:
+            if self._backup_scheduled:
+                return
+            self._backup_scheduled = True
+
         def work() -> None:
+            if solo and quiet and upload_only:
+                import time
+
+                time.sleep(BACKUP_DELAY)
+                self._backup_scheduled = False
             if not self._sync_lock.acquire(blocking=False):
                 return
             try:
-                report = self.onedrive.sync_now(upload_only=upload_only)
+                report = self.onedrive.backup_now(force=True) if solo and force else \
+                    self.onedrive.sync_now(upload_only=upload_only)
                 self.sync_status = "OneDrive: " + report.text()
                 if not quiet or report.downloaded or report.rejected:
                     self.render()

@@ -1,5 +1,13 @@
 ## Matrix Finance Mobile — Android
 
+**Nowe w 1.3:** **działa bez komputera.** Na ekranie powitalnym „Zacznij — bez komputera”: telefon jest główną bazą —
+zakładasz konta (także lokaty, obligacje, inwestycje, własne rodzaje), **kredyty i zakupy na raty**, koperty z budżetami,
+cele i **stałe płatności** (czynsz, rachunki, pensja, odkładanie); zlecenia, raty i lokaty telefon księguje sam.
+Dane chroni **zaszyfrowana kopia zapasowa** `MatrixFinance-kopia.mfx`: na Androidzie z OneDrive zapisuje się sama, na
+iPhonie — Udostępnij › Zachowaj w Plikach. Kopię wczytasz na nowym telefonie albo w programie na komputer
+(Ustawienia › Import danych). Tryb z komputerem działa jak dotąd (Ustawienia › Tryb pracy).
+**iPhone:** ta sama wersja — https://arturknopek.github.io/Matrix-Finance-Mobile/ (Safari › Udostępnij › Do ekranu początkowego).
+
 **Nowe w 1.2.1:** poprawiony układ ekranu Synchronizacja na wąskich telefonach (opis przełącznika
 „Automatycznie” i przycisk „Zapamiętaj folder” nie są już ucinane).
 

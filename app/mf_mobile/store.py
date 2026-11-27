@@ -1,9 +1,13 @@
 """
 Warstwa danych aplikacji mobilnej — cienka nakładka na wspólny silnik (app/src).
 
-Każda zmiana danych przechodzi przez `sync.record_op`: zostaje od razu zastosowana
-na telefonie i odłożona do wysłania na komputer (plik .mfops w OneDrive).
-W trybie demonstracyjnym zmiany są tylko lokalne (nic nie trafia do komputera).
+Tryby pracy:
+  * „Z komputerem” — każda zmiana przechodzi przez `sync.record_op`: zostaje od razu zastosowana
+    na telefonie i odłożona do wysłania na komputer (plik .mfops w OneDrive);
+  * „Bez komputera” (samodzielny) — telefon jest główną bazą: zmiany są tylko lokalne, telefon sam
+    księguje zlecenia stałe, raty i lokaty, a dane chroni zaszyfrowana kopia zapasowa (.mfx — ten sam
+    format co eksport w programie na komputer, więc dane można przenieść w obie strony);
+  * dane przykładowe — zmiany tylko lokalne.
 """
 
 from __future__ import annotations
@@ -25,6 +29,10 @@ SET_THEME = "local_theme"
 SET_DEMO = "local_demo"
 SET_SENT_AT = "local_ops_sent_at"
 SET_SENT_COUNT = "local_ops_sent_count"
+SET_MODE = "local_mode"  # "solo" = bez komputera; inaczej — z komputerem
+SET_BACKUP_AT = "local_backup_at"
+SET_BACKUP_DIGEST = "local_backup_digest"
+BACKUP_NAME = "MatrixFinance-kopia.mfx"
 
 TYPE_EXPENSE, TYPE_INCOME = ledger.EXPENSE, ledger.INCOME
 MONTHS_PL = ["styczeń", "luty", "marzec", "kwiecień", "maj", "czerwiec", "lipiec", "sierpień", "wrzesień",
@@ -71,8 +79,22 @@ class Store:
         return self.setting(SET_DEMO) == "1"
 
     @property
+    def is_solo(self) -> bool:
+        """Tryb „Bez komputera”: telefon jest główną bazą danych."""
+        return self.setting(SET_MODE) == "solo" and not self.is_demo
+
+    @property
+    def local_only(self) -> bool:
+        return self.is_demo or self.is_solo
+
+    @property
+    def can_manage(self) -> bool:
+        """Zakładanie i edycja kont, kopert, celów, zleceń — gdy telefon nie zależy od komputera."""
+        return self.local_only
+
+    @property
     def has_data(self) -> bool:
-        return self.is_demo or bool(self.setting(sync.SET_SNAPSHOT_AT))
+        return self.is_demo or self.is_solo or bool(self.setting(sync.SET_SNAPSHOT_AT))
 
     @property
     def snapshot_at(self) -> str:
@@ -147,7 +169,7 @@ class Store:
         return dict(row) if row else None
 
     def upcoming(self, days: int = 14) -> List[Dict[str, Any]]:
-        """Zlecenia stałe z komputera (księguje je komputer) — na telefonie tylko podgląd."""
+        """Najbliższe zlecenia stałe i raty (z komputerem — podgląd; bez komputera — księguje telefon)."""
         try:
             return [r for r in recurring.get_upcoming_recurring(10) if r["days"] <= days]
         except Exception:
@@ -160,12 +182,12 @@ class Store:
             return []
 
     def pending(self) -> List[Dict[str, Any]]:
-        return [] if self.is_demo else sync.pending_ops()
+        return [] if self.local_only else sync.pending_ops()
 
     # ------------------------------------------------------------------ zmiany (operacje)
 
     def _do(self, op: str, data: Dict[str, Any]) -> None:
-        if self.is_demo:  # dane przykładowe: tylko lokalnie
+        if self.local_only:  # bez komputera / dane przykładowe: tylko lokalnie
             sync.apply_op(sync.make_op(op, data), strict=True)
         else:
             sync.record_op(op, data)
@@ -211,6 +233,208 @@ class Store:
 
     def envelope_move(self, source: str, target: str, amount: float) -> None:
         self._do("envelope.move", {"source": source, "target": target, "ym": self.ym, "amount": round(amount, 2)})
+
+    # ------------------------------------------------------------------ zarządzanie (tryb bez komputera)
+
+    @staticmethod
+    def _ok(result: Tuple[bool, str]) -> None:
+        ok, msg = result
+        if not ok:
+            raise ValueError(msg or "Nie udało się zapisać.")
+
+    def add_account(self, name: str, kind: str, balance: float = 0.0, institution: str = "",
+                    rate: float = 0.0, custom_label: str = "", custom_group: str = "",
+                    custom_flags: str = "") -> None:
+        self._ok(acc_api.add_account(name.strip(), round(balance, 2), account_kind=kind, institution=institution,
+                                     interest_rate=rate, opened_at=date.today().isoformat(),
+                                     custom_label=custom_label or None, custom_group=custom_group or None,
+                                     custom_flags=custom_flags or None))
+
+    def add_deposit(self, name: str, amount: float, rate: float, months: int, start: str, source: Optional[str],
+                    institution: str = "", kind: str = "deposit", auto_renew: bool = False,
+                    return_to: Optional[str] = None) -> None:
+        self._ok(acc_api.open_term_deposit(name.strip(), source, round(amount, 2), rate, int(months), start,
+                                           institution=institution or None, kind=kind, auto_renew=auto_renew,
+                                           return_to=return_to))
+
+    def add_loan(self, name: str, amount: float, installments: int, first_due: str, pay_from: str,
+                 rate: float = 0.0, payment: Optional[float] = None, kind: str = "installments",
+                 category: str = "", disburse_to: Optional[str] = None, existing: bool = False,
+                 institution: str = "") -> int:
+        from src.finance import loans
+
+        self._ok(loans.open_loan(name.strip(), amount, installments, first_due, pay_from, rate, payment, kind,
+                                 category or None, disburse_to, institution or None, record_history=not existing))
+        return self.process_due()[0]
+
+    def update_account(self, name: str, new_name: str, institution: str, rate: Optional[float]) -> None:
+        fields: Dict[str, Any] = {"institution": institution.strip() or None}
+        if rate is not None:
+            fields["interest_rate"] = rate
+        self._ok(acc_api.update_account(name, new_name.strip() or name, **fields))
+
+    def close_account(self, name: str, transfer_to: Optional[str]) -> None:
+        self._ok(acc_api.close_account(name, transfer_to))
+
+    def valuation(self, name: str, value: float) -> float:
+        return acc_api.update_valuation(name, round(value, 2))
+
+    def add_envelope(self, name: str, budget: float, rollover: bool) -> None:
+        name = name.strip()
+        if not name:
+            raise ValueError("Podaj nazwę koperty.")
+        self._ok(env_api.add_category(name, round(budget, 2), rollover))
+
+    def update_envelope(self, c_id: int, name: str, budget: float, rollover: bool) -> None:
+        name = name.strip()
+        if not name:
+            raise ValueError("Podaj nazwę koperty.")
+        self._ok(env_api.update_category(c_id, name, round(budget, 2), rollover))
+
+    def delete_envelope(self, c_id: int) -> None:
+        env_api.delete_category(c_id)
+
+    def add_goal(self, name: str, target: float, account: str, deadline: Optional[str]) -> None:
+        if not name.strip():
+            raise ValueError("Podaj nazwę celu.")
+        self._ok(goals_api.add_piggy_bank(name.strip(), round(target, 2), account, deadline))
+
+    def update_goal(self, goal_id: int, name: str, target: float, account: str, deadline: Optional[str]) -> None:
+        if not name.strip():
+            raise ValueError("Podaj nazwę celu.")
+        self._ok(goals_api.update_piggy_bank(goal_id, name.strip(), round(target, 2), account, deadline))
+
+    def delete_goal(self, goal_id: int) -> float:
+        return goals_api.delete_piggy_bank(goal_id, refund=True)
+
+    def recurring(self) -> List[Dict[str, Any]]:
+        out = []
+        for row in recurring.get_all_recurring():
+            r = dict(row)
+            r["next_due"] = recurring.get_recurring_next_due(row)
+            r["active"] = int(r.get("is_registered") or 0) == 1
+            out.append(r)
+        out.sort(key=lambda r: (not r["active"], r["next_due"] or date.max, r["name"]))
+        return out
+
+    def save_recurring(self, r_id: Optional[int], name: str, r_type: str, amount: float, account: str,
+                       cycle: str, start: str, category: Optional[str] = None, target_account: Optional[str] = None,
+                       goal_id: Optional[int] = None) -> int:
+        """Dodaje / zmienia zlecenie stałe i od razu księguje terminy, które już minęły. Zwraca ich liczbę."""
+        if not name.strip():
+            raise ValueError("Podaj nazwę płatności.")
+        if amount <= 0:
+            raise ValueError("Kwota musi być większa od zera.")
+        args = (name.strip(), round(amount, 2), r_type, category if r_type in (TYPE_EXPENSE, TYPE_INCOME) else None,
+                account, cycle, start, True, goal_id if r_type == "Na Skarbonkę" else None,
+                target_account if r_type == "Przelew" else None)
+        self._ok(recurring.update_recurring(r_id, *args) if r_id else recurring.add_recurring(*args))
+        return self.process_due()[0]
+
+    def delete_recurring(self, r_id: int) -> None:
+        self._ok(recurring.delete_recurring(r_id))
+
+    def toggle_recurring(self, r_id: int) -> bool:
+        return recurring.toggle_recurring_pause(r_id)
+
+    def process_due(self) -> Tuple[int, List[str]]:
+        """Bez komputera: księguje zaległe zlecenia stałe i raty, rozlicza lokaty po terminie."""
+        if not self.local_only:
+            return 0, []
+        settled = acc_api.settle_matured_deposits()
+        return recurring.process_due_payments(), settled
+
+    # ------------------------------------------------------------------ tryb pracy
+
+    def start_solo(self, fresh: bool) -> None:
+        """Przejście na tryb „Bez komputera”. fresh=True: czysta baza (konta Karta i Gotówka, koperty)."""
+        if fresh or self.is_demo:
+            with storage.open_user_db() as conn:  # połączenie z OneDrive zostaje
+                keep = [tuple(r) for r in conn.execute("SELECT key, value FROM settings WHERE key LIKE 'local_od_%'")]
+            self.reset_all()
+            for key, value in keep:
+                self.set_setting(key, value)
+            with storage.open_user_db(write=True) as conn:
+                conn.execute("UPDATE accounts SET account_kind = 'cash' WHERE name = 'Gotówka' "
+                             "AND COALESCE(account_kind, 'checking') = 'checking'")
+        with storage.open_user_db(write=True) as conn:
+            conn.execute("DELETE FROM sync_outbox")
+        self.set_setting(SET_DEMO, "0")
+        self.set_setting(SET_MODE, "solo")
+
+    def use_pc_mode(self) -> None:
+        """Powrót do pracy z komputerem: dane telefonu zastąpi najbliższe pobranie z komputera."""
+        self.set_setting(SET_MODE, "pc")
+
+    # ------------------------------------------------------------------ kopia zapasowa (.mfx)
+
+    def backup_bytes(self, password: Optional[str] = None) -> bytes:
+        """Zaszyfrowana kopia wszystkich danych — ten sam format, co eksport .mfx programu na komputer."""
+        import json
+
+        from src.finance import data_io
+        from src.utils.crypto_utils import encrypt_bytes
+
+        password = password or self.password
+        if len(password or "") < 6:
+            raise ValueError("Ustaw hasło kopii zapasowej (co najmniej 6 znaków).")
+        payload = json.dumps(data_io.export_data_dict(), ensure_ascii=False).encode("utf-8")
+        return encrypt_bytes(payload, password)
+
+    def data_digest(self) -> str:
+        return sync.data_fingerprint()
+
+    @property
+    def backup_needed(self) -> bool:
+        """Dane zmieniły się od ostatniej kopii."""
+        return self.setting(SET_BACKUP_DIGEST) != self.data_digest()
+
+    def mark_backup(self) -> None:
+        self.set_setting(SET_BACKUP_AT, storage.now_iso())
+        self.set_setting(SET_BACKUP_DIGEST, self.data_digest())
+
+    @property
+    def backup_at(self) -> str:
+        return self.setting(SET_BACKUP_AT)
+
+    def backup_age_days(self) -> Optional[int]:
+        stamp = self.backup_at
+        if not stamp:
+            return None
+        try:
+            return (date.today() - date.fromisoformat(stamp[:10])).days
+        except ValueError:
+            return None
+
+    def restore_backup(self, raw: bytes, password: str) -> Dict[str, int]:
+        """Wczytuje kopię (.mfx z telefonu albo eksport z komputera) — ZASTĘPUJE dane telefonu."""
+        import json
+
+        from src.finance import data_io
+        from src.utils.crypto_utils import decrypt_bytes
+
+        data = None
+        if raw.lstrip().startswith(b"{"):
+            try:
+                data = json.loads(raw.decode("utf-8"))
+            except (UnicodeDecodeError, ValueError):
+                data = None
+        if data is None:
+            try:
+                data = json.loads(decrypt_bytes(raw, password).decode("utf-8"))
+            except ValueError as e:
+                raise ValueError("Złe hasło albo uszkodzony plik kopii.") from e
+        if data.get("format") != data_io.EXPORT_FORMAT or not isinstance(data.get("tables"), dict):
+            raise ValueError("To nie jest kopia Matrix Finance (.mfx).")
+        counts = data_io.import_data_dict(data)
+        with storage.open_user_db(write=True) as conn:
+            conn.execute("DELETE FROM sync_outbox")
+        self.set_setting(SET_DEMO, "0")
+        self.set_setting(SET_MODE, "solo")
+        if len(password or "") >= 6:
+            self.set_password(password)
+        self.mark_backup()  # dane = kopia
+        return counts
 
     # ------------------------------------------------------------------ synchronizacja
 

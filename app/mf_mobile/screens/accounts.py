@@ -57,6 +57,15 @@ def build(app: Any) -> List[ft.Control]:
                 content_padding=ft.Padding.symmetric(horizontal=6),
                 on_click=lambda e, acc=a: forms.account_actions(app, acc)))
         out.append(card(p, ft.Column(tiles, spacing=0), padding=4))
-    out.append(txt("Dotknij konto: przelew lub korekta salda (kredyt: nadpłata = przelew na jego konto). Nowe konta, "
-                   "lokaty, kredyty i raty dodasz na komputerze — raty księguje komputer.", 12, p.muted))
+    if store.can_manage:
+        from mf_mobile import manage
+        from mf_mobile.ui import secondary_button
+
+        out.append(secondary_button(p, "Nowe konto, lokata, kredyt lub raty", lambda e: manage.account_sheet(app),
+                                    ft.Icons.ADD))
+        out.append(txt("Dotknij konto: przelew, korekta salda, edycja, zamknięcie. Raty i odsetki z lokat aplikacja "
+                       "księguje sama.", 12, p.muted))
+    else:
+        out.append(txt("Dotknij konto: przelew lub korekta salda (kredyt: nadpłata = przelew na jego konto). Nowe "
+                       "konta, lokaty, kredyty i raty dodasz na komputerze — raty księguje komputer.", 12, p.muted))
     return out

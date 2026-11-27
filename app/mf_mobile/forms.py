@@ -185,7 +185,8 @@ def transfer_dialog(app: Any, source: Optional[str] = None, target: Optional[str
     names = store.account_names()
     options = [(f"{a} · {money(balances.get(a, 0))}", a) for a in names]
     if len(names) < 2:
-        app.toast("Potrzebne są co najmniej dwa konta (dodasz je na komputerze).", error=True)
+        app.toast("Potrzebne są co najmniej dwa konta" + (" (Konta › Nowe konto)." if store.can_manage else
+                                                          " (dodasz je na komputerze)."), error=True)
         return
     src = dropdown(p, "Z konta", options, source or names[0])
     dst = dropdown(p, "Na konto", options, target or next(n for n in names if n != (source or names[0])))
@@ -268,7 +269,8 @@ def debt_dialog(app: Any, account: Dict[str, Any]) -> None:
 
     app.show(_sheet(app, f"Ile zostało: {account['name']}", [
         txt(f"W aplikacji: do spłaty {money(current)}", 14, p.muted), value,
-        txt("Wpisz kwotę z harmonogramu banku / sklepu. Raty księguje komputer automatycznie.", 12, p.muted),
+        txt("Wpisz kwotę z harmonogramu banku / sklepu. Raty księguje " + (
+            "aplikacja" if store.can_manage else "komputer") + " automatycznie.", 12, p.muted),
         primary_button(p, "Zapisz", save, ft.Icons.CHECK)]))
 
 
@@ -287,7 +289,7 @@ def account_actions(app: Any, account: Dict[str, Any]) -> None:
                         on_click=go(lambda: transfer_dialog(app, target=account["name"]))),
             ft.ListTile(leading=ft.Icon(ft.Icons.TUNE, color=p.accent), title=txt("Ile zostało do spłaty"),
                         on_click=go(lambda: debt_dialog(app, account))),
-        ]
+        ] + _manage_tiles(app, account, go)
         info = []
         if loan.get("next_due"):
             info.append(f"następna rata {loan['next_due']:%d.%m.%Y}: {money(loan['payment'])}")
@@ -307,10 +309,31 @@ def account_actions(app: Any, account: Dict[str, Any]) -> None:
         ft.ListTile(leading=ft.Icon(ft.Icons.TUNE, color=p.accent), title=txt("Korekta salda"),
                     subtitle=txt("ustaw saldo zgodne z bankiem", 12, p.muted),
                     on_click=go(lambda: balance_dialog(app, account))),
-    ]
+    ] + _manage_tiles(app, account, go)
     app.show(_sheet(app, account["name"], [
         txt(f"{getattr(kind, 'label', '')} · {account.get('institution') or ''}".strip(" ·"), 13, p.muted),
         bold(money(float(account["balance"])), 26, p.text), *tiles]))
+
+
+def _manage_tiles(app: Any, account: Dict[str, Any], go: Callable) -> List[ft.Control]:
+    """Bez komputera: edycja, wycena (inwestycje) i zamknięcie konta."""
+    if not app.store.can_manage:
+        return []
+    from mf_mobile import manage
+
+    p = app.p
+    kind = account.get("kind")
+    tiles: List[ft.Control] = []
+    if getattr(kind, "valuation", False):
+        tiles.append(ft.ListTile(leading=ft.Icon(ft.Icons.SHOW_CHART, color=p.accent), title=txt("Wycena"),
+                                 subtitle=txt("aktualna wartość inwestycji", 12, p.muted),
+                                 on_click=go(lambda: manage.valuation_sheet(app, account))))
+    tiles.append(ft.ListTile(leading=ft.Icon(ft.Icons.EDIT_OUTLINED, color=p.accent),
+                             title=txt("Edytuj (nazwa, bank, oprocentowanie)"),
+                             on_click=go(lambda: manage.account_edit_sheet(app, account))))
+    tiles.append(ft.ListTile(leading=ft.Icon(ft.Icons.ARCHIVE_OUTLINED, color=p.negative), title=txt("Zamknij konto"),
+                             on_click=go(lambda: manage.close_account_sheet(app, account))))
+    return tiles
 
 
 # =============================================================================
@@ -335,6 +358,12 @@ def envelope_actions(app: Any, env: Dict[str, Any]) -> None:
         ft.ListTile(leading=ft.Icon(ft.Icons.MOVE_UP, color=p.accent), title=txt("Przesuń do innej koperty"),
                     on_click=go(lambda: envelope_amount(app, env, "move"))),
     ]
+    if app.store.can_manage:
+        from mf_mobile import manage
+
+        tiles.append(ft.ListTile(leading=ft.Icon(ft.Icons.EDIT_OUTLINED, color=p.accent),
+                                 title=txt("Edytuj kopertę (nazwa, budżet, elastyczna)"),
+                                 on_click=go(lambda: manage.envelope_sheet(app, env))))
     info = (f"Budżet {money(env['budget'])}"
             + (f" + z poprz. {money(env['carried'])}" if env["carried"] else "")
             + (f" + korekty {money(env['adjustment'], signed=True)}" if env["adjustment"] else "")
@@ -398,6 +427,11 @@ def goal_actions(app: Any, goal: Dict[str, Any]) -> None:
                     subtitle=txt("bez ruchu pieniędzy na kontach", 12, p.muted),
                     on_click=go(lambda: goal_amount(app, goal, "set"))),
     ]
+    if app.store.can_manage:
+        from mf_mobile import manage
+
+        tiles.append(ft.ListTile(leading=ft.Icon(ft.Icons.EDIT_OUTLINED, color=p.accent),
+                                 title=txt("Edytuj lub usuń cel"), on_click=go(lambda: manage.goal_sheet(app, goal))))
     app.show(_sheet(app, goal["name"], [
         txt(f"{money(float(goal['current_amount'] or 0))} z {money(float(goal['target_amount'] or 0))}", 16, p.text),
         *tiles]))

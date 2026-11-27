@@ -1,6 +1,9 @@
 # Matrix Finance Mobile (Android)
 
-Aplikacja na telefon do programu **[Matrix Finance](https://github.com/ArturKnopek/Matrix-Finance-TUI)** — budżet domowy połączony z oszczędzaniem kopertowym. Na telefonie szybko dodajesz wydatki i sprawdzasz koperty, a dane łączą się z programem na komputerze przez **zaszyfrowany plik w Twoim OneDrive** (bez żadnego serwera).
+Budżet domowy połączony z oszczędzaniem kopertowym — **na telefonie, także bez komputera**. Działa na dwa sposoby:
+
+* **Bez komputera** (od wersji 1.3): telefon jest główną bazą. Zakładasz konta, lokaty, kredyty i raty, koperty z budżetami, cele i stałe płatności; aplikacja sama księguje zlecenia, raty i odsetki z lokat. Dane chroni **zaszyfrowana kopia zapasowa** (OneDrive / Pliki), którą w razie potrzeby wczytasz też w programie na komputer.
+* **Z programem na komputerze [Matrix Finance](https://github.com/ArturKnopek/Matrix-Finance-TUI)**: główna baza na komputerze, telefon do szybkiego dodawania wydatków; dane łączą się przez **zaszyfrowany plik w Twoim OneDrive** (bez żadnego serwera).
 
 > To osobny projekt. Program na komputer (Linux / Windows z instalatorem) jest w repozytorium **Matrix-Finance-TUI**; oba korzystają z tego samego silnika budżetu (salda, koperty, synchronizacja).
 
@@ -9,6 +12,20 @@ Aplikacja na telefon do programu **[Matrix Finance](https://github.com/ArturKnop
 **Android:** pobierz `MatrixFinance-<wersja>.apk` z zakładki **Releases** i otwórz go na telefonie (Android zapyta o zgodę na instalację z tego źródła).
 
 **iPhone / iPad:** otwórz w **Safari** stronę **https://arturknopek.github.io/Matrix-Finance-Mobile/** → przycisk *Udostępnij* → **„Do ekranu początkowego”**. Na ekranie pojawi się ikona Matrix Finance, a aplikacja uruchamia się jak zwykła (bez paska Safari). Nie trzeba konta deweloperskiego Apple ani komputera. Szczegóły i ograniczenia — niżej.
+
+## Bez komputera — telefon jako główna baza
+
+1. Pierwsze uruchomienie: **„Zacznij — bez komputera”** (albo Ustawienia › Tryb pracy).
+2. **Konta:** dotknij konto › *Korekta salda* (stan z banku) albo **„Nowe konto, lokata, kredyt lub raty”** — rodzaj z listy (konto osobiste, oszczędnościowe, Revolut, lokata, obligacje, maklerskie, IKE/IKZE/PPK, kredyt, zakup na raty) albo **własny rodzaj** (nazwa, grupa, cechy). Saldo początkowe zapisuje się bez wpisu w historii.
+3. **Koperty:** dotknij kopertę › *Edytuj* — budżet miesięczny, koperta elastyczna (reszta przechodzi na kolejny miesiąc); *Nowa koperta*.
+4. **Stałe płatności** (Pulpit › Nadchodzące płatności › *Zarządzaj*): czynsz, rachunki, subskrypcje, pensja, przelew na oszczędności, odkładanie na cel — co tydzień / miesiąc / kwartał / rok.
+5. **Cele:** przycisk + na zakładce Cele; dotknij cel › *Edytuj lub usuń*.
+6. Zlecenia, raty i lokaty po terminie aplikacja **księguje sama** przy uruchomieniu (także zaległe).
+7. **Kopia zapasowa** (ikona chmurki u góry): hasło (min. 6 znaków) i
+   * Android + OneDrive (połączenie jak niżej): kopia **`MatrixFinance-kopia.mfx` zapisuje się sama** po zmianach w zapamiętanym folderze,
+   * iPhone / bez OneDrive: *Zapisz kopię* › Udostępnij › **Zachowaj w Plikach** › OneDrive / iCloud. Aplikacja przypomni, gdy kopia ma ponad 7 dni.
+8. **Nowy telefon:** *Przywróć kopię zapasową (.mfx)* na ekranie powitalnym.
+9. **Przeniesienie na komputer:** Matrix Finance (PC) › Ustawienia › **Import danych** › plik `.mfx` + hasło. W drugą stronę: na komputerze *Eksport danych* (.mfx), na telefonie *Przywróć z pliku*.
 
 ## Co potrafi
 
@@ -85,8 +102,10 @@ APK buduje i testuje na emulatorze GitHub Actions (*Actions → Android (APK)*).
 
 ```
 app/main.py          punkt wejścia (Flet)
-app/mf_mobile/       interfejs: app (nawigacja), store (dane), forms (okna), screens/ (ekrany), theme, ui,
-                     onedrive (połączenie z OneDrive), web_storage (dane w przeglądarce — iPhone)
+app/mf_mobile/       interfejs: app (nawigacja), store (dane, tryby pracy, kopia), forms (okna operacji),
+                     manage (zakładanie kont / kopert / celów / stałych płatności — tryb bez komputera),
+                     screens/ (ekrany), theme, ui, onedrive (połączenie z OneDrive),
+                     web_storage (dane w przeglądarce — iPhone)
 app/src/             silnik — KOPIA z Matrix-Finance-TUI (nie edytuj tutaj: tools/update_engine.py)
 tests/               testy
 tools/               update_engine.py, web_preview.py, make_keystore.sh

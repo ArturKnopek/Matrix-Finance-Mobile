@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, List
+from typing import Any, Dict, List
 
 import flet as ft
 
@@ -22,9 +22,13 @@ def build(app: Any) -> List[ft.Control]:
         ft.Row([txt("do rozdysponowania", 12, p.muted, expand=True),
                 bold(money(s["unallocated"]), 13, p.positive if s["unallocated"] >= 0 else p.negative)]),
     ], spacing=6), highlight=True)]
+    manage_ok = store.can_manage
     if not envs:
-        out.append(empty(p, "Brak kopert z budżetem w tym miesiącu.\nBudżety ustawisz na komputerze.",
-                         ft.Icons.MAIL_OUTLINE))
+        out.append(empty(p, "Brak kopert z budżetem w tym miesiącu.\n" + (
+            "Dotknij kopertę niżej i ustaw budżet albo dodaj nową." if manage_ok else
+            "Budżety ustawisz na komputerze."), ft.Icons.MAIL_OUTLINE))
+        if manage_ok:
+            out += _no_budget(app, [])
         return out
     out.append(section(p, "Dotknij kopertę: wydatek, korekta, przesunięcie"))
     for e in envs:
@@ -43,4 +47,25 @@ def build(app: Any) -> List[ft.Control]:
     out.append(ft.Row([ft.Icon(ft.Icons.AUTORENEW, size=14, color=p.accent),
                        txt("koperta elastyczna — niewydane środki przechodzą na kolejny miesiąc.", 12, p.muted,
                            expand=True)], spacing=4))
+    if manage_ok:
+        out += _no_budget(app, envs)
+    return out
+
+
+def _no_budget(app: Any, shown: List[Dict[str, Any]]) -> List[ft.Control]:
+    """Bez komputera: koperty bez budżetu (dotknij, aby ustawić) i przycisk „Nowa koperta”."""
+    from mf_mobile import manage
+    from mf_mobile.ui import secondary_button
+
+    p, store = app.p, app.store
+    names = {e["name"] for e in shown}
+    rest = [e for e in store.envelopes(only_active=False) if e["name"] not in names]
+    out: List[ft.Control] = []
+    if rest:
+        out.append(section(p, "Bez budżetu — dotknij, aby ustawić"))
+        out.append(card(p, ft.Column([ft.ListTile(
+            title=txt(e["name"], 14, p.text), dense=True, content_padding=ft.Padding.symmetric(horizontal=6),
+            trailing=ft.Icon(ft.Icons.EDIT_OUTLINED, color=p.muted, size=18),
+            on_click=lambda ev, env=e: manage.envelope_sheet(app, env)) for e in rest], spacing=0), padding=4))
+    out.append(secondary_button(p, "Nowa koperta", lambda e: manage.envelope_sheet(app), ft.Icons.ADD))
     return out
