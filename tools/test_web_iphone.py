@@ -17,6 +17,13 @@ from playwright.sync_api import sync_playwright
 URL, OUT = sys.argv[1], Path(sys.argv[2])
 OUT.mkdir(parents=True, exist_ok=True)
 errors = []
+console = []
+
+
+def dump_console() -> None:
+    print("==== KONSOLA PRZEGLĄDARKI (ostatnie wpisy) ====")
+    for line in console[-120:]:
+        print(line[:2000])
 
 
 def texts(page) -> list:
@@ -34,6 +41,8 @@ def wait_for_text(page, needle: str, timeout: float = 150) -> list:
         if any(needle in t for t in found):
             return found
         page.wait_for_timeout(2000)
+    page.screenshot(path=str(OUT / "blad.png"))
+    dump_console()
     raise SystemExit(f"Nie pojawił się tekst „{needle}”. Na ekranie: {texts(page)[:30]}")
 
 
@@ -49,8 +58,14 @@ with sync_playwright() as p:
     browser = p.webkit.launch()
     ctx = browser.new_context(**p.devices["iPhone 15"])
     page = ctx.new_page()
-    page.on("console", lambda m: m.type == "error" and errors.append(m.text))
-    page.on("pageerror", lambda e: errors.append(str(e)))
+    def on_console(m) -> None:
+        console.append(f"[{m.type}] {m.text}")
+        if m.type == "error":
+            errors.append(m.text)
+
+    page.on("console", on_console)
+    page.on("pageerror", lambda e: (errors.append(str(e)), console.append(f"[pageerror] {e}")))
+    page.on("worker", lambda w: console.append(f"[worker] {w.url}"))
     t0 = time.time()
     page.goto(URL, wait_until="load")
     found = wait_for_text(page, "Wypróbuj na danych przykładowych")
