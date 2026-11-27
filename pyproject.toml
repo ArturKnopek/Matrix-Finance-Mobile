@@ -21,8 +21,8 @@ copyright = "Licencja MIT"
 path = "app"
 
 [tool.flet.web]
-# wersja przeglądarkowa (iPhone): Python w przeglądarce (Pyodide) potrzebuje modułu sqlite3 z Pyodide
-dependencies = ["flet==1.1.3", "sqlite3"]
+# wersja przeglądarkowa (iPhone): Python w przeglądarce (Pyodide); sqlite3 jest w jego bibliotece standardowej
+dependencies = ["flet==1.1.3"]
 
 [tool.flet.android]
 split_per_abi = false
