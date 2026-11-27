@@ -1,5 +1,11 @@
 ## Matrix Finance Mobile — Android
 
+**Nowe w 1.2:** OneDrive **bez wybierania plików** — połączenie z kontem Microsoft raz, zapamiętana lokalizacja
+(„Obecna lokalizacja: OneDrive › MatrixFinance”), zapis zawsze do tego samego pliku, synchronizacja automatyczna
+(przy uruchomieniu i po każdej zmianie) albo przyciskiem. Wymaga jednorazowo identyfikatora aplikacji (Client ID) —
+instrukcja w README i w aplikacji. **iPhone:** wersja przeglądarkowa — Safari → https://arturknopek.github.io/Matrix-Finance-Mobile/
+→ Udostępnij → „Do ekranu początkowego”.
+
 **Nowe w 1.1:** wysyłanie zmian **prosto do OneDrive** (okno „Udostępnij” → OneDrive → folder MatrixFinance — plik
 nie zostaje w pamięci telefonu), kredyty i zakupy na raty w Kontach (rata, postęp, nadpłata), silnik zgodny z
 programem na komputer **2.3.0** (zalecana aktualizacja komputera).

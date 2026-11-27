@@ -11,6 +11,146 @@ from mf_mobile.ui import banner, bold, card, field, primary_button, secondary_bu
 from src.finance import sync
 
 
+def onedrive_section(app: Any, password_ok: Any) -> List[ft.Control]:
+    """OneDrive bez wybierania plików: logowanie raz, zapamiętany folder, zawsze ten sam plik."""
+    p, store, od = app.p, app.store, app.onedrive
+    out: List[ft.Control] = [section(p, "OneDrive — bez wybierania plików (zalecane)")]
+    if app.web:
+        out.append(card(p, txt("W wersji przeglądarkowej (iPhone) synchronizacja działa ręcznie: „Pobierz dane” "
+                               "wybiera plik w aplikacji Pliki (OneDrive), a „Wyślij zmiany” — przez Udostępnij.",
+                               13, p.text)))
+        return out
+
+    if od.connected:
+        def sync_click(e: Any) -> None:
+            if not password_ok():
+                return
+            app.toast("Synchronizuję z OneDrive…")
+            app.background_sync(upload_only=False, quiet=False)
+
+        folder = field(p, "Folder w OneDrive", od.folder, dense=True, expand=True)
+
+        def change_folder(e: Any) -> None:
+            od.set_folder(folder.value or "")
+            app.render()
+            app.toast(f"Zapamiętano lokalizację: {od.location()}")
+
+        def disconnect(e: Any) -> None:
+            app.confirm("Rozłączyć OneDrive?", "Telefon przestanie sam zapisywać i pobierać pliki. Twoje dane zostają.",
+                        lambda: od.disconnect(), yes="Rozłącz")
+
+        last = store.setting("local_od_last_sync")
+        rows: List[ft.Control] = [
+            ft.Row([ft.Icon(ft.Icons.CLOUD_DONE_OUTLINED, color=p.positive), txt(f"Połączono: {od.account}", 14,
+                                                                                  p.text, expand=True)]),
+            txt("Obecna lokalizacja:", 12, p.muted),
+            bold(od.location(), 16, p.accent),
+            txt(f"Plik zmian telefonu: {od.ops_name()} — zawsze ten sam, zastępowany przy wysłaniu. "
+                f"Dane z komputera: {sync.SNAPSHOT_FILE}.", 12, p.muted),
+            txt(f"Ostatnia synchronizacja: {sync.format_stamp(last)}" if last else "Jeszcze nie synchronizowano.", 12,
+                p.muted),
+        ]
+        if app.sync_status:
+            rows.append(txt(app.sync_status, 12, p.warning if "błąd" in app.sync_status.lower() else p.text))
+        rows.append(ft.Row([
+            ft.Switch(value=od.auto, active_color=p.accent,
+                      on_change=lambda e: (od.set_auto(e.control.value), app.render())),
+            txt("Automatycznie: przy uruchomieniu i po każdej zmianie", 13, p.text, expand=True)]))
+        out.append(card(p, ft.Column(rows, spacing=6), highlight=True))
+        out.append(primary_button(p, "Synchronizuj teraz", sync_click, ft.Icons.SYNC))
+        out.append(ft.Row([folder, ft.TextButton(content="Zapamiętaj", on_click=change_folder,
+                                                 style=ft.ButtonStyle(color=p.accent))]))
+        out.append(ft.Row([ft.TextButton(content="Rozłącz OneDrive", on_click=disconnect,
+                                         style=ft.ButtonStyle(color=p.muted))], alignment=ft.MainAxisAlignment.END))
+        return out
+
+    client = field(p, "Identyfikator aplikacji (Client ID)", od.client_id, dense=True, expand=True)
+
+    def save_client(e: Any) -> None:
+        od.set_client_id(client.value or "")
+        app.render()
+        app.toast("Zapisano identyfikator aplikacji.")
+
+    def connect(e: Any) -> None:
+        if not password_ok():
+            return
+        try:
+            login = od.start_login()
+        except Exception as err:
+            app.toast(str(err), error=True)
+            return
+        state = {"cancelled": False}
+
+        async def open_page(ev: Any) -> None:
+            try:
+                await app.clipboard.set(login.user_code)
+            except Exception:
+                pass
+            await app.urls.launch_url(login.verification_uri)
+
+        def cancel(ev: Any) -> None:
+            state["cancelled"] = True
+            app.close()
+
+        app.show(ft.AlertDialog(
+            modal=True, bgcolor=p.panel, title=bold("Połącz z OneDrive", 18),
+            content=ft.Column([
+                txt("1. Dotknij „Kopiuj kod i otwórz stronę”.", 13, p.text),
+                txt("2. Wklej kod i zaloguj się na konto Microsoft, na którym masz OneDrive.", 13, p.text),
+                txt("3. Wróć do aplikacji — połączy się sama.", 13, p.text),
+                ft.Container(bold(login.user_code, 30, p.accent, selectable=True), alignment=ft.Alignment.CENTER,
+                             padding=ft.Padding.all(10)),
+                txt(login.verification_uri, 12, p.muted, selectable=True),
+            ], tight=True, spacing=8),
+            actions=[ft.TextButton(content="Anuluj", on_click=cancel, style=ft.ButtonStyle(color=p.muted)),
+                     ft.FilledButton(content="Kopiuj kod i otwórz stronę", on_click=open_page,
+                                     style=ft.ButtonStyle(bgcolor=p.accent, color=p.on_accent))]))
+
+        def wait() -> None:
+            import time
+
+            while not state["cancelled"]:
+                time.sleep(login.interval)
+                try:
+                    if od.poll_login(login):
+                        app.close()
+                        app.render()
+                        app.toast(f"Połączono z OneDrive ({od.account}). Lokalizacja: {od.location()}")
+                        app.background_sync(upload_only=False, quiet=False)
+                        return
+                except Exception as err:
+                    app.close()
+                    app.toast(str(err), error=True)
+                    return
+
+        app.page.run_thread(wait)
+
+    steps = [
+        "Wejdź na portal.azure.com (zaloguj się tym samym kontem Microsoft) › Microsoft Entra ID › "
+        "Rejestracje aplikacji › Nowa rejestracja.",
+        "Nazwa: Matrix Finance. Typy kont: „Konta w dowolnym katalogu organizacyjnym i osobiste konta Microsoft”. "
+        "Zarejestruj.",
+        "Uwierzytelnianie › „Zezwalaj na przepływy klientów publicznych”: Tak › Zapisz.",
+        "Skopiuj „Identyfikator aplikacji (klienta)” i wklej poniżej (robisz to tylko raz).",
+    ]
+    out.append(card(p, ft.Column([
+        txt("Połącz raz z kontem Microsoft — potem telefon sam zapisuje i pobiera pliki w folderze "
+            f"OneDrive › {od.folder}, bez pytania o lokalizację (plik zmian jest zawsze ten sam).", 13, p.text),
+        *([] if od.client_id else [
+            bold("Najpierw jednorazowo: identyfikator aplikacji", 13, p.warning),
+            *[ft.Row([bold(f"{i}.", 12, p.accent), txt(s, 12, p.text, expand=True)],
+                     vertical_alignment=ft.CrossAxisAlignment.START) for i, s in enumerate(steps, 1)],
+        ]),
+    ], spacing=8)))
+    if not od.client_id:
+        out.append(ft.Row([client, ft.TextButton(content="Zapisz", on_click=save_client,
+                                                 style=ft.ButtonStyle(color=p.accent))]))
+    out.append(primary_button(p, "Połącz z OneDrive (konto Microsoft)", connect, ft.Icons.CLOUD_OUTLINED)
+               if od.client_id else secondary_button(p, "Połącz z OneDrive (najpierw Client ID)", save_client,
+                                                     ft.Icons.CLOUD_OUTLINED))
+    return out
+
+
 def build(app: Any) -> List[ft.Control]:
     p, store = app.p, app.store
     pending = store.pending()
@@ -131,7 +271,9 @@ def build(app: Any) -> List[ft.Control]:
         app.toast("Zapisano plik. Pamiętaj, żeby trafił do folderu MatrixFinance w OneDrive.")
 
     out.append(password)
-    out.append(primary_button(p, "Pobierz dane z OneDrive", download, ft.Icons.CLOUD_DOWNLOAD_OUTLINED))
+    out += onedrive_section(app, save_password)
+    out.append(section(p, "Ręcznie — wybór pliku / Udostępnij"))
+    out.append(secondary_button(p, "Pobierz dane z OneDrive (wybierz plik)", download, ft.Icons.CLOUD_DOWNLOAD_OUTLINED))
     out.append(secondary_button(p, f"Wyślij zmiany do OneDrive ({len(pending)})", upload,
                                 ft.Icons.CLOUD_UPLOAD_OUTLINED))
     out.append(ft.Row([ft.TextButton(content="Zapisz plik zmian w innym miejscu…", on_click=save_elsewhere,

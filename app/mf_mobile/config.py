@@ -9,6 +9,11 @@ from pathlib import Path
 APP_DIR = Path(__file__).resolve().parents[1]
 
 
+def is_web() -> bool:
+    """Aplikacja webowa (np. iPhone przez Safari) — Python w przeglądarce (Pyodide)."""
+    return sys.platform == "emscripten"
+
+
 def configure() -> Path:
     """Katalog danych aplikacji: na telefonie prywatny katalog aplikacji (FLET_APP_STORAGE_DATA)."""
     if str(APP_DIR) not in sys.path:

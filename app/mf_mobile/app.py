@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import traceback
 from typing import Any, Callable, List, Optional
 
@@ -35,6 +36,15 @@ class MobileApp:
         self.view_state: dict = {}  # filtry ekranów (np. wyszukiwanie transakcji)
         self.picker = ft.FilePicker()  # usługa systemowego wyboru plików (OneDrive przez dostawcę dokumentów)
         self.share = ft.Share()  # systemowe „Udostępnij” — wysyłka pliku zmian prosto do aplikacji OneDrive
+        self.clipboard = ft.Clipboard()
+        self.urls = ft.UrlLauncher()
+        from mf_mobile.config import is_web
+        from mf_mobile.onedrive import OneDrive
+
+        self.web = is_web()
+        self.onedrive = OneDrive(self.store)
+        self._sync_lock = threading.Lock()
+        self.sync_status = ""  # komunikat ostatniej automatycznej synchronizacji
         self.body = self._new_body()
         self.root = ft.SafeArea(content=self.body, expand=True)
         self._screen_key: Optional[tuple] = None
@@ -53,9 +63,11 @@ class MobileApp:
         page.theme_mode = ft.ThemeMode.DARK
         self.apply_theme(self.store.theme, render=False)
         page.add(self.root)
-        if not self.store.has_data:
+        if not self.store.has_data and not self.onedrive.connected:
             self.subpage = "welcome"
         self.render()
+        if self.can_auto_sync():
+            self.background_sync(upload_only=False, quiet=True)
 
     def apply_theme(self, name: str, render: bool = True) -> None:
         self.store.set_theme(name)
@@ -79,6 +91,16 @@ class MobileApp:
         self.page.update()
         if self._scroll_top:
             self.page.run_task(self._scroll_to_top)
+        if self.web:  # przeglądarka: zapis bazy w pamięci przeglądarki po każdej zmianie
+            self.page.run_task(self._persist_web)
+
+    async def _persist_web(self) -> None:
+        from mf_mobile import web_storage
+
+        try:
+            await web_storage.save(self.prefs)
+        except Exception:
+            log.exception("Nie udało się zapisać danych w przeglądarce")
 
     async def _scroll_to_top(self) -> None:
         try:
@@ -229,13 +251,57 @@ class MobileApp:
         if success:
             self.toast(success)
         self.render()
+        if self.can_auto_sync():  # zmiana od razu trafia do OneDrive (zapamiętany folder)
+            self.background_sync(upload_only=True, quiet=True)
         return True
 
+    # ================================================================ OneDrive w tle
 
-def main(page: ft.Page) -> None:
+    def can_auto_sync(self) -> bool:
+        od = self.onedrive
+        return (not self.web and od.connected and od.auto and bool(self.store.password)
+                and not self.store.is_demo)
+
+    def background_sync(self, upload_only: bool = False, quiet: bool = False) -> None:
+        """Synchronizacja z zapamiętanym folderem OneDrive w osobnym wątku (bez blokowania ekranu)."""
+        def work() -> None:
+            if not self._sync_lock.acquire(blocking=False):
+                return
+            try:
+                report = self.onedrive.sync_now(upload_only=upload_only)
+                self.sync_status = "OneDrive: " + report.text()
+                if not quiet or report.downloaded or report.rejected:
+                    self.render()
+                    if report.rejected:
+                        self.toast(f"Komputer odrzucił zmian: {len(report.rejected)} — szczegóły w Synchronizacji.",
+                                   error=True)
+                    elif not quiet:
+                        self.toast(self.sync_status)
+            except Exception as e:  # brak sieci itp. — zmiany czekają, spróbujemy przy następnej okazji
+                self.sync_status = f"OneDrive: {e}"
+                if not quiet:
+                    self.render()
+                    self.toast(str(e), error=True)
+            finally:
+                self._sync_lock.release()
+
+        self.page.run_thread(work)
+
+
+async def main(page: ft.Page) -> None:
     logging.basicConfig(level=logging.INFO)
-    page.data = MobileApp(page)
-    page.data.start()
+    from mf_mobile.config import is_web
+
+    prefs = None
+    if is_web():  # iPhone / przeglądarka: dane z pamięci przeglądarki
+        from mf_mobile import web_storage
+
+        prefs = web_storage.new_prefs()
+        await web_storage.restore(prefs)
+    app = MobileApp(page)
+    app.prefs = prefs
+    page.data = app
+    app.start()
 
 
 __all__ = ["MobileApp", "main", "MOBILE_VERSION"]

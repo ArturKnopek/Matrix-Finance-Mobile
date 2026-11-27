@@ -24,6 +24,13 @@ class StubApp:
         self.view_state: dict = {}
         self.page, self.picker = _Page(), None
         self.shown, self.toasts = [], []
+        from mf_mobile.onedrive import OneDrive
+
+        self.onedrive = OneDrive(store)
+        self.web = False
+        self.sync_status = ""
+
+    def background_sync(self, upload_only=False, quiet=False): pass
 
     def render(self): pass
     def go_tab(self, index): pass
@@ -111,3 +118,18 @@ def test_loan_account_on_phone(demo_app):
     assert any(u.get("loan") == loan["name"] for u in store.upcoming(days=40))
     store.set_balance(loan["name"], -900)
     assert next(a for a in store.accounts() if a["name"] == loan["name"])["balance"] == -900
+
+
+
+def test_sync_screen_onedrive_states(demo_app):
+    app, store = demo_app, demo_app.store
+    od = app.onedrive
+    assert sync_screen.build(app)  # brak Client ID — instrukcja
+    od.set_client_id("abc")
+    assert sync_screen.build(app)  # przycisk „Połącz”
+    store.set_setting("local_od_refresh", "token")
+    store.set_setting("local_od_account", "Jan")
+    controls = sync_screen.build(app)  # połączono: „Obecna lokalizacja”
+    assert controls
+    app.web = True
+    assert sync_screen.build(app)  # wersja przeglądarkowa (iPhone): tryb ręczny
