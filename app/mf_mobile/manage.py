@@ -501,3 +501,74 @@ def recurring_actions(app: Any, item: Dict[str, Any]) -> None:
 def summary_text(items: List[Dict[str, Any]]) -> str:
     active = [i for i in items if i["active"]]
     return f"{plural(len(active), 'aktywna płatność', 'aktywne płatności', 'aktywnych płatności')}"
+
+
+# =============================================================================
+# Automatyczne odkładanie (reguły)
+# =============================================================================
+
+AUTOSAVE_MODES = {"income_percent": "Procent każdego wpływu (np. 10% pensji)",
+                  "roundup": "Zaokrąglanie wydatków (reszta odkładana)"}
+
+
+def autosave_sheet(app: Any) -> None:
+    p, store = app.p, app.store
+    names = store.account_names()
+    liquid = store.account_names(liquid_only=True)
+    goals = store.goals()
+    mode = dropdown(p, "Rodzaj", [(label, code) for code, label in AUTOSAVE_MODES.items()], "income_percent")
+    value = field(p, "Ile procent", "10", keyboard_type=ft.KeyboardType.NUMBER, suffix=txt("%", 16, p.muted))
+    source = dropdown(p, "Z konta (wpływy / wydatki na tym koncie)", [(a, a) for a in liquid],
+                      liquid[0] if liquid else None)
+    target_opts = [(f"Cel: {g['name']}", f"goal:{g['id']}") for g in goals] + \
+        [(f"Konto: {a}", f"account:{a}") for a in names]
+    target = dropdown(p, "Odkładaj na", target_opts, target_opts[0][1] if target_opts else None)
+    hint = txt("", 12, p.muted)
+
+    def refresh(update: bool = True) -> None:
+        if mode.value == "roundup":
+            value.label, value.suffix = "Zaokrąglaj do pełnych", txt("zł", 16, p.muted)
+            hint.value = "Np. 10 zł: zakup za 23,40 zł → 6,60 zł trafia na oszczędności."
+        else:
+            value.label, value.suffix = "Ile procent", txt("%", 16, p.muted)
+            hint.value = "Przy każdym dochodzie na tym koncie część od razu trafia na cel lub konto oszczędnościowe."
+        if update:
+            sheet.update()
+
+    mode.on_select = lambda e: refresh()
+
+    def save(e: Any) -> None:
+        v = _num(value.value or "")
+        if v is None or v <= 0:
+            return _error(app, value, "Podaj wartość większą od zera")
+        if not target.value or not source.value:
+            target.error_text = "Wybierz, gdzie odkładać"
+            target.update()
+            return
+        kind, tgt = target.value.split(":", 1)
+        app.close()
+        app.run_action(lambda: store.save_autosave(None, source.value, mode.value, v, kind, tgt),
+                       "Dodano regułę odkładania.")
+
+    sheet = _sheet(app, "Automatyczne odkładanie", [mode, value, source, target, hint,
+                                                    primary_button(p, "Zapisz regułę", save, ft.Icons.CHECK)])
+    refresh(update=False)
+    app.show(sheet)
+
+
+def autosave_actions(app: Any, rule: Dict[str, Any]) -> None:
+    p, store = app.p, app.store
+    active = bool(rule.get("is_active"))
+
+    def go(fn: Callable) -> Callable:
+        return lambda e: (app.close(), fn())
+
+    app.show(_sheet(app, "Reguła odkładania", [
+        txt(rule["text"], 14, p.text), txt(f"› {rule['target_label']}", 13, p.muted),
+        ft.ListTile(leading=ft.Icon(ft.Icons.PAUSE_CIRCLE_OUTLINE if active else ft.Icons.PLAY_CIRCLE_OUTLINE,
+                                    color=p.accent), title=txt("Wstrzymaj" if active else "Wznów"),
+                    on_click=go(lambda: app.run_action(lambda: store.toggle_autosave(rule["id"]),
+                                                       "Wstrzymano" if active else "Wznowiono"))),
+        ft.ListTile(leading=ft.Icon(ft.Icons.DELETE_OUTLINE, color=p.negative), title=txt("Usuń"),
+                    on_click=go(lambda: app.confirm("Usunąć regułę?", rule["text"],
+                                                    lambda: store.delete_autosave(rule["id"]), yes="Usuń")))]))

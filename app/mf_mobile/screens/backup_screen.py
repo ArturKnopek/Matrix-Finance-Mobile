@@ -107,23 +107,14 @@ def build(app: Any) -> List[ft.Control]:
         return True
 
     async def share_backup(e: Any) -> None:
+        from mf_mobile.files import deliver
+
         if not password_ok():
             return
-        data = store.backup_bytes()
-        try:
-            result = await app.share.share_files(
-                [ft.ShareFile.from_bytes(data, mime_type="application/octet-stream", name=BACKUP_NAME)],
-                title="Zapisz kopię Matrix Finance", subject=BACKUP_NAME)
-        except Exception as err:
-            app.toast(f"Nie udało się otworzyć „Udostępnij”: {err}", error=True)
-            return
-        status_value = getattr(getattr(result, "status", None), "value", "unavailable")
-        if status_value == "dismissed":
-            app.toast("Anulowano — kopii nie zapisano.")
-            return
-        store.mark_backup()
-        app.render()
-        app.toast("Kopia gotowa. Zapisz ją w OneDrive (Pliki › OneDrive) lub innym bezpiecznym miejscu.")
+        if await deliver(app, BACKUP_NAME, store.backup_bytes(), title="Zapisz kopię Matrix Finance"):
+            store.mark_backup()
+            app.render()
+            app.toast("Kopia gotowa. Trzymaj ją w OneDrive / iCloud (Pliki) lub innym bezpiecznym miejscu.")
 
     async def save_backup_file(e: Any) -> None:
         if not password_ok():

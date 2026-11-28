@@ -41,6 +41,8 @@ def build(app: Any) -> List[ft.Control]:
                        kpi(p, "Majątek", money(s["net_worth"]), p.text, f"dostępne {money(s['liquid'])}")],
                       spacing=10))
 
+    out.append(_advisor(app))
+
     envelopes = [e for e in store.envelopes() if e["available"] > 0 or e["spent"] > 0][:5]
     out.append(section(p, "Koperty", "Wszystkie", lambda e: app.go_tab(2)))
     if envelopes:
@@ -110,7 +112,7 @@ def _first_steps(app: Any) -> List[ft.Control]:
     """Bez komputera: pierwsze kroki, dopóki nie ustawiono budżetów i nie ma wpisów."""
     p, store = app.p, app.store
     has_budget = any(e["budget"] > 0 for e in store.envelopes(only_active=False))
-    has_tx = bool(store.transactions(limit=1))
+    has_tx = store.has_transactions()
     has_balance = any(abs(a["balance"]) > 0 for a in store.accounts())
     if has_budget and has_tx:
         return []
@@ -132,3 +134,23 @@ def _first_steps(app: Any) -> List[ft.Control]:
             row.append(ft.TextButton(content=action, on_click=handler, style=ft.ButtonStyle(color=p.accent)))
         rows.append(ft.Row(row, spacing=8))
     return [card(p, ft.Column(rows, spacing=8), highlight=True)]
+
+
+def _advisor(app: Any) -> ft.Control:
+    """Najważniejsza wskazówka doradcy + tempo wydatków; dotknięcie otwiera Analizę."""
+    p, store = app.p, app.store
+    tips = store.insights()
+    tip = tips[0] if tips else None
+    colors = {"alert": p.negative, "warn": p.warning, "info": p.accent, "ok": p.positive}
+    pace = store.month_pace()
+    line = ""
+    if pace and pace["spent"] > 0:
+        line = f"Prognoza wydatków do końca miesiąca: {money(pace['forecast'])}"
+    rows: List[ft.Control] = [ft.Row([ft.Icon(ft.Icons.INSIGHTS, color=p.accent, size=20),
+                                      bold("Analiza i doradca", 14, p.text, expand=True),
+                                      ft.Icon(ft.Icons.CHEVRON_RIGHT, color=p.muted)])]
+    if tip:
+        rows.append(txt(tip.text, 13, colors.get(tip.level, p.text)))
+    if line:
+        rows.append(txt(line, 12, p.muted))
+    return card(p, ft.Column(rows, spacing=6), on_click=lambda e: app.open_subpage("analysis"))

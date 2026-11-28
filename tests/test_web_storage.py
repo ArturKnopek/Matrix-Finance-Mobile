@@ -35,3 +35,25 @@ def test_save_and_restore_database():
     s2 = Store()
     assert s2.has_data and {a["name"]: a["balance"] for a in s2.accounts()} == before
     assert any(t["shop"] == "Piekarnia" for t in s2.transactions())
+
+
+def test_compressed_and_legacy_formats():
+    import base64
+
+    prefs = FakePrefs()
+    s = Store()
+    s.reset_all()
+    s.start_solo(fresh=True)
+    s.add_transaction("Wydatek", 9.99, "Jedzenie", "Karta", "Żabka")
+    web_storage._last_digest = None
+    assert asyncio.run(web_storage.save(prefs))
+    stored = prefs.data[web_storage.KEY]
+    raw = web_storage.snapshot_bytes()
+    assert stored.startswith(web_storage.ZIP_PREFIX) and len(stored) < len(base64.b64encode(raw))
+    assert web_storage.decode(stored) == raw
+    legacy = base64.b64encode(raw).decode("ascii")  # zapis z wersji 1.3
+    assert web_storage.decode(legacy) == raw
+    prefs.data[web_storage.KEY] = legacy
+    s.reset_all()
+    assert asyncio.run(web_storage.restore(prefs))
+    assert any(t["shop"] == "Żabka" for t in Store().transactions())

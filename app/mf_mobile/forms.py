@@ -79,6 +79,38 @@ def transaction_sheet(app: Any, tx: Optional[Dict[str, Any]] = None, preset_cate
                        (tx or {}).get("account_type") or (accounts[0] if accounts else None))
     shop = field(p, "Sklep / od kogo", (tx or {}).get("shop") or "", capitalization=ft.TextCapitalization.SENTENCES)
     desc = field(p, "Opis (opcjonalnie)", (tx or {}).get("description") or "")
+    account_values = set(accounts)
+
+    def apply_hint(hint: Optional[Dict[str, Any]], force: bool = False) -> None:
+        """Koperta i konto jak ostatnio dla tego sklepu (nie nadpisuje wybranej koperty, chyba że force)."""
+        if not hint:
+            return
+        if hint.get("category") and (force or not category.value):
+            category.value = hint["category"]
+            category.update()
+        if hint.get("account") in account_values and (force or not account.value):
+            account.value = hint["account"]
+            account.update()
+
+    def on_shop_blur(e: Any) -> None:
+        if state["type"] == TYPE_EXPENSE and not editing:
+            apply_hint(store.shop_hint(shop.value or ""))
+
+    shop.on_blur = on_shop_blur
+    recent: List[ft.Control] = []
+    if not editing and state["type"] == TYPE_EXPENSE:
+        def pick(item: Dict[str, Any]) -> Callable:
+            def handler(e: Any) -> None:
+                shop.value = item["shop"]
+                shop.update()
+                apply_hint(item, force=True)
+            return handler
+
+        chips = [ft.Chip(label=txt(r["shop"], 13), on_click=pick(r), bgcolor=p.panel_hi)
+                 for r in store.recent_shops(8)]
+        if chips:
+            recent = [ft.Column([txt("Ostatnie — dotknij, aby wpisać sklep i kopertę:", 12, p.muted),
+                                 ft.Row(chips, wrap=True, spacing=6, run_spacing=6)], spacing=6)]
     date_info = txt("", 14, p.text)
     date_btn = ft.OutlinedButton(content="Kalendarz", icon=ft.Icons.CALENDAR_MONTH_OUTLINED,
                                  style=ft.ButtonStyle(color=p.text))
@@ -147,7 +179,8 @@ def transaction_sheet(app: Any, tx: Optional[Dict[str, Any]] = None, preset_cate
         buttons.append(secondary_button(p, "Usuń", lambda e: delete_transaction(app, tx), ft.Icons.DELETE_OUTLINE,
                                         color=p.negative))
     app.show(_sheet(app, "Edycja transakcji" if editing else "Nowa transakcja",
-                    [kind, amount, category, account, shop, desc, quick_dates, ft.Row(buttons, spacing=10)]))
+                    [kind, amount, *recent, category, account, shop, desc, quick_dates,
+                     ft.Row(buttons, spacing=10)]))
 
 
 def delete_transaction(app: Any, tx: Dict[str, Any]) -> None:

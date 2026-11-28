@@ -25,6 +25,7 @@ TABS = [
 ]
 MONTH_TABS = {0, 1, 2}  # ekrany zależne od miesiąca
 BACKUP_DELAY = 15  # s — kopia w OneDrive po serii zmian (bez komputera)
+LOCK_AFTER = 60  # s poza aplikacją, po których wymagany jest PIN
 
 
 class MobileApp:
@@ -47,6 +48,10 @@ class MobileApp:
         self._sync_lock = threading.Lock()
         self.sync_status = ""  # komunikat ostatniej automatycznej synchronizacji
         self._backup_scheduled = False
+        self.locked = self.store.has_pin  # blokada PIN-em przy starcie
+        self._hidden_at: Optional[float] = None
+        self._due_checked = None  # dzień ostatniego księgowania zaległych płatności (bez komputera)
+        self._storage_warned = False
         self.body = self._new_body()
         self.root = ft.SafeArea(content=self.body, expand=True)
         self._screen_key: Optional[tuple] = None
@@ -65,13 +70,32 @@ class MobileApp:
         page.theme_mode = ft.ThemeMode.DARK
         self.apply_theme(self.store.theme, render=False)
         page.add(self.root)
+        page.on_app_lifecycle_state_change = self._on_lifecycle
         if not self.store.has_data and not self.onedrive.connected:
             self.subpage = "welcome"
         self.render()
-        if self.store.is_solo:  # bez komputera: telefon sam księguje zlecenia, raty i lokaty
-            self.process_due(quiet=False)
         if self.can_auto_sync():
             self.background_sync(upload_only=False, quiet=True)
+
+    def _on_lifecycle(self, e: Any) -> None:
+        """Po powrocie do aplikacji (po ponad minucie) — blokada PIN-em; nowy dzień — zaległe płatności."""
+        import time
+
+        state = getattr(e, "state", None)
+        if state in (ft.AppLifecycleState.HIDE, ft.AppLifecycleState.PAUSE):
+            if self._hidden_at is None:
+                self._hidden_at = time.monotonic()
+        elif state in (ft.AppLifecycleState.SHOW, ft.AppLifecycleState.RESUME):
+            away = time.monotonic() - self._hidden_at if self._hidden_at is not None else 0.0
+            self._hidden_at = None
+            if self.store.has_pin and not self.locked and away > LOCK_AFTER:
+                self.locked = True
+                self.close()
+            self.render()
+
+    def unlock(self) -> None:
+        self.locked = False
+        self.render()
 
     def process_due(self, quiet: bool = True) -> int:
         try:
@@ -93,7 +117,7 @@ class MobileApp:
             return False
         age = store.backup_age_days()
         if age is None:  # jeszcze żadnej kopii — przypominamy, gdy jest już co chronić
-            return bool(store.transactions(limit=1)) or len(store.accounts()) > 2
+            return store.has_transactions() or len(store.accounts()) > 2
         return age >= 7
 
     def apply_theme(self, name: str, render: bool = True) -> None:
@@ -109,6 +133,7 @@ class MobileApp:
 
     def render(self) -> None:
         self._scroll_top = False
+        notice = self._daily_due() if not self.locked else ""
         try:
             self._render()
         except Exception:  # błąd jednego ekranu nie może zamknąć aplikacji
@@ -120,6 +145,23 @@ class MobileApp:
             self.page.run_task(self._scroll_to_top)
         if self.web:  # przeglądarka: zapis bazy w pamięci przeglądarki po każdej zmianie
             self.page.run_task(self._persist_web)
+        if notice:
+            self.toast(notice)
+
+    def _daily_due(self) -> str:
+        """Bez komputera: raz dziennie (także gdy aplikacja jest otwarta przez noc) księguje zaległe płatności."""
+        from datetime import date
+
+        if not self.store.is_solo or self._due_checked == date.today():
+            return ""
+        self._due_checked = date.today()
+        try:
+            count, settled = self.store.process_due()
+        except Exception:
+            log.exception("Błąd księgowania zaległych płatności")
+            return ""
+        parts = [f"Zaksięgowano stałe płatności i raty: {count}."] if count else []
+        return " ".join(parts + settled)
 
     async def _persist_web(self) -> None:
         from mf_mobile import web_storage
@@ -128,6 +170,10 @@ class MobileApp:
             await web_storage.save(self.prefs)
         except Exception:
             log.exception("Nie udało się zapisać danych w przeglądarce")
+            if not self._storage_warned:  # np. brak miejsca — użytkownik musi wiedzieć
+                self._storage_warned = True
+                self.toast("Nie udało się zapisać danych w pamięci telefonu. Zrób kopię zapasową "
+                           "(ikona chmurki).", error=True)
 
     async def _scroll_to_top(self) -> None:
         try:
@@ -139,24 +185,33 @@ class MobileApp:
         from mf_mobile.screens import accounts, dashboard, envelopes, goals, settings, sync_screen, transactions, welcome
 
         p = self.p
-        key = (self.subpage, self.tab, self.store.ym)
+        key = (self.subpage, self.tab, self.store.ym, self.locked)
         if key != self._screen_key:  # nowy ekran (albo miesiąc) => lista od góry; po zmianie danych pozycja zostaje
             self._screen_key = key
             self._scroll_top = True
+        if self.locked:
+            from mf_mobile.screens import lock
+
+            self.page.appbar = None
+            self.page.navigation_bar = None
+            self.page.floating_action_button = None
+            self.body.controls = lock.build(self)
+            return
         if self.subpage == "welcome":
             self.page.appbar = None
             self.page.navigation_bar = None
             self.page.floating_action_button = None
             self.body.controls = welcome.build(self)
             return
-        if self.subpage in ("sync", "settings", "recurring"):
-            from mf_mobile.screens import backup_screen, recurring_screen
+        if self.subpage in ("sync", "settings", "recurring", "analysis"):
+            from mf_mobile.screens import analysis, backup_screen, recurring_screen
 
             solo = self.store.is_solo
             title, builder = {
                 "sync": ("Kopia zapasowa", backup_screen.build) if solo else ("Synchronizacja", sync_screen.build),
                 "settings": ("Ustawienia", settings.build),
                 "recurring": ("Stałe płatności", recurring_screen.build),
+                "analysis": ("Analiza", analysis.build),
             }[self.subpage]
             self.page.appbar = self._appbar(title, back=True)
             self.page.navigation_bar = None
@@ -286,6 +341,7 @@ class MobileApp:
         """Wykonuje zmianę danych; błąd silnika (np. brak środków) pokazuje jako komunikat."""
         try:
             action()
+            self.store.touch()
         except ValueError as e:
             self.toast(str(e), error=True)
             return False

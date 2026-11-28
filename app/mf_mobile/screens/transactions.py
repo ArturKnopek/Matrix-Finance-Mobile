@@ -18,8 +18,10 @@ ICONS = {"Wydatek": ft.Icons.SOUTH_EAST, "Dochód": ft.Icons.NORTH_EAST}
 
 def build(app: Any) -> List[ft.Control]:
     p, store = app.p, app.store
-    state = app.view_state.setdefault("transactions", {"search": "", "kind": "all"})
-    rows = store.transactions(state["search"], state["kind"])
+    state = app.view_state.setdefault("transactions", {"search": "", "kind": "all", "all": False})
+    everywhere = bool(state.get("all")) and bool(state["search"])
+    rows = store.transactions(state["search"], state["kind"], limit=300 if everywhere else None,
+                              all_months=everywhere)
 
     search = field(p, "Szukaj (sklep, opis, kwota…)", state["search"], prefix_icon=ft.Icons.SEARCH, dense=True)
 
@@ -36,6 +38,12 @@ def build(app: Any) -> List[ft.Control]:
         on_change=lambda e: (state.update(kind=e.control.selected[0] if e.control.selected else "all"),
                              app.render()))
     out: List[ft.Control] = [search, ft.Row([kinds], scroll=ft.ScrollMode.AUTO)]
+    if state["search"]:
+        out.append(ft.Row([
+            ft.Switch(value=bool(state.get("all")), active_color=p.accent,
+                      on_change=lambda e: (state.update(all=bool(e.control.value)), app.render())),
+            ft.Container(txt("Szukaj we wszystkich miesiącach", 13, p.text), expand=True)],
+            vertical_alignment=ft.CrossAxisAlignment.CENTER))
     spent = sum(-t["signed_amount"] for t in rows if t["type"] == "Wydatek")
     earned = sum(t["signed_amount"] for t in rows if t["type"] == "Dochód")
     out.append(ft.Row([txt(plural(len(rows), "wpis", "wpisy", "wpisów"), 12, p.muted, expand=True),
@@ -48,7 +56,8 @@ def build(app: Any) -> List[ft.Control]:
         items = list(items)
         try:
             d = date.fromisoformat(day)
-            header = f"{DAYS[d.weekday()].capitalize()}, {d:%d.%m}"
+            header = f"{DAYS[d.weekday()].capitalize()}, {d:%d.%m.%Y}" if everywhere else \
+                f"{DAYS[d.weekday()].capitalize()}, {d:%d.%m}"
         except ValueError:
             header = day
         day_total = sum(t["signed_amount"] for t in items if t["type"] in ("Wydatek", "Dochód"))

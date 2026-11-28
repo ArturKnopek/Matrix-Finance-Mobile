@@ -3,7 +3,9 @@ Trwałość danych w wersji przeglądarkowej (iPhone: Safari → „Do ekranu po
 
 Python działa w przeglądarce (Pyodide) z wirtualnym dyskiem w pamięci — po zamknięciu karty znika.
 Dlatego cała baza telefonu (SQLite) jest zapisywana w pamięci przeglądarki (SharedPreferences =
-localStorage) po każdej zmianie i odtwarzana przy starcie. Baza jest mała (zwykle < 1 MB).
+localStorage) po każdej zmianie i odtwarzana przy starcie. Zapis jest kompresowany (zlib, ok. 3× mniej —
+localStorage w Safari ma ok. 5 MB; 3000 wpisów ≈ 0,2 MB po kompresji). Starszy zapis (bez kompresji)
+wczytuje się bez zmian.
 """
 
 from __future__ import annotations
@@ -11,12 +13,14 @@ from __future__ import annotations
 import base64
 import hashlib
 import sqlite3
+import zlib
 from pathlib import Path
 from typing import Any, Optional
 
 import flet as ft
 
 KEY = "matrix_finance_db_v1"
+ZIP_PREFIX = "z1:"  # zapis skompresowany
 _last_digest: Optional[str] = None
 
 
@@ -36,7 +40,7 @@ async def restore(prefs: Any) -> bool:
         return False
     if not data:
         return False
-    raw = base64.b64decode(data)
+    raw = decode(data)
     path = _db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(raw)
@@ -62,9 +66,19 @@ async def save(prefs: Any) -> bool:
     digest = hashlib.sha256(raw).hexdigest()
     if digest == _last_digest:
         return False
-    await prefs.set(KEY, base64.b64encode(raw).decode("ascii"))
+    await prefs.set(KEY, encode(raw))
     _last_digest = digest
     return True
+
+
+def encode(raw: bytes) -> str:
+    return ZIP_PREFIX + base64.b64encode(zlib.compress(raw, 6)).decode("ascii")
+
+
+def decode(data: str) -> bytes:
+    if data.startswith(ZIP_PREFIX):
+        return zlib.decompress(base64.b64decode(data[len(ZIP_PREFIX):]))
+    return base64.b64decode(data)  # zapis sprzed wersji 1.4
 
 
 def new_prefs() -> Any:

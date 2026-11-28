@@ -25,6 +25,8 @@ from src.finance import analytics, envelopes as env_api, goals as goals_api, led
 from src.utils.parsing import parse_amount  # noqa: E402
 
 PHONE_USER = "telefon"
+SET_PIN = "local_pin"  # sól$skrót — blokada aplikacji PIN-em (nie trafia do kopii)
+SET_PIN_LEN = "local_pin_len"
 SET_THEME = "local_theme"
 SET_DEMO = "local_demo"
 SET_SENT_AT = "local_ops_sent_at"
@@ -59,12 +61,31 @@ def money(value: float, signed: bool = False, currency: str = "zł") -> str:
     return f"{fmt.replace(',', ' ').replace('.', ',')} {currency}".strip()
 
 
+def _changes(method: Any) -> Any:
+    """Metoda zmieniająca dane: unieważnia zapamiętany skrót danych (sprawdzanie „czy jest nowa kopia”)."""
+    def wrapper(self: "Store", *args: Any, **kwargs: Any) -> Any:
+        try:
+            return method(self, *args, **kwargs)
+        finally:
+            self.touch()
+
+    wrapper.__name__ = method.__name__
+    wrapper.__doc__ = method.__doc__
+    return wrapper
+
+
 class Store:
     def __init__(self) -> None:
         storage.init_auth_db()
         self.db_path = storage.set_active_user_db(PHONE_USER)
         storage.init_user_db(self.db_path, 0.0, 0.0)
         self.ym = date.today().strftime("%Y-%m")
+        self._generation = 0
+        self._digest_cache: Tuple[int, str] = (-1, "")
+
+    def touch(self) -> None:
+        """Dane się zmieniły (skrót danych policzy się na nowo przy następnym sprawdzeniu)."""
+        self._generation += 1
 
     # ------------------------------------------------------------------ ustawienia / stan
 
@@ -152,9 +173,11 @@ class Store:
     def goals(self) -> List[Dict[str, Any]]:
         return goals_api.goals_overview()
 
-    def transactions(self, search: str = "", kind: str = "all", limit: Optional[int] = None) -> List[Dict[str, Any]]:
+    def transactions(self, search: str = "", kind: str = "all", limit: Optional[int] = None,
+                     all_months: bool = False) -> List[Dict[str, Any]]:
         type_filter = {"expense": TYPE_EXPENSE, "income": TYPE_INCOME, "transfer": ledger.TRANSFER}.get(kind)
-        rows = ledger.fetch_transactions(search_text=search.strip() or None, month_filter=self.ym,
+        rows = ledger.fetch_transactions(search_text=search.strip() or None,
+                                         month_filter=None if all_months else self.ym,
                                          type_filter=type_filter, limit=limit)
         pending = {op["data"].get("uid") for op in self.pending()}
         out = []
@@ -176,16 +199,187 @@ class Store:
             return []
 
     def insights(self) -> List[Any]:
+        """Wskazówki doradcy (polski zapis liczb, bez skrótów klawiszowych programu na komputer)."""
+        import re
+
         try:
-            return analytics.get_insights(self.ym)
+            tips = analytics.get_insights(self.ym)
         except Exception:
             return []
+        for t in tips:
+            text = re.sub(r"(\d)\.(\d)", r"\1,\2", t.text.replace(" (Ctrl+R)", "").replace("(Ctrl+R)", ""))
+            t.text = text.replace("odśwież, aby", "otwórz aplikację ponownie, aby")
+        return tips
 
     def pending(self) -> List[Dict[str, Any]]:
         return [] if self.local_only else sync.pending_ops()
 
+    # ------------------------------------------------------------------ analiza
+
+    def trend(self, months: int = 6) -> List[Dict[str, Any]]:
+        return analytics.get_trend(months, self.ym)
+
+    def spending_by_envelope(self) -> List[Dict[str, Any]]:
+        rows = [e for e in env_api.get_envelope_overview(self.ym) if e["spent"] > 0]
+        rows.sort(key=lambda e: -e["spent"])
+        return rows
+
+    def top_shops(self, limit: int = 5) -> List[Dict[str, Any]]:
+        """Gdzie wydajesz najwięcej w miesiącu (sklep, suma, liczba wizyt)."""
+        totals: Dict[str, Dict[str, Any]] = {}
+        for r in ledger.fetch_transactions(month_filter=self.ym, type_filter=TYPE_EXPENSE):
+            shop = (r["shop"] or "").strip()
+            if not shop:
+                continue
+            item = totals.setdefault(shop.lower(), {"shop": shop, "total": 0.0, "count": 0})
+            item["total"] += float(r["amount"] or 0)
+            item["count"] += 1
+        return sorted(totals.values(), key=lambda x: -x["total"])[:limit]
+
+    def month_pace(self) -> Optional[Dict[str, float]]:
+        """Bieżący miesiąc: wydano do dziś, średnio dziennie i prognoza do końca miesiąca."""
+        import calendar
+
+        today = date.today()
+        if self.ym != today.strftime("%Y-%m"):
+            return None
+        days = calendar.monthrange(today.year, today.month)[1]
+        s = env_api.get_budget_summary(self.ym)
+        spent = float(s["expense"])
+        per_day = spent / today.day
+        return {"spent": spent, "per_day": per_day, "forecast": per_day * days, "day": today.day, "days": days,
+                "available": float(s["available"]), "income": float(s["income"])}
+
+    # ------------------------------------------------------------------ szybkie dodawanie
+
+    def recent_shops(self, limit: int = 8) -> List[Dict[str, Any]]:
+        """Najczęstsze ostatnio sklepy z ich ostatnią kopertą i kontem (podpowiedzi przy dodawaniu)."""
+        seen: Dict[str, Dict[str, Any]] = {}
+        for r in ledger.fetch_transactions(type_filter=TYPE_EXPENSE, limit=400):
+            shop = (r["shop"] or "").strip()
+            if not shop or (r["linked_group_id"] or "").startswith("loan-") \
+                    or (r["description"] or "").startswith("[CYKLICZNE]"):
+                continue  # raty i stałe płatności księgują się same — nie podpowiadamy ich
+            key = shop.lower()
+            if key not in seen:  # pierwszy = najnowszy wpis tego sklepu
+                seen[key] = {"shop": shop, "category": r["category"], "account": r["account_type"], "count": 0}
+            seen[key]["count"] += 1
+        return sorted(seen.values(), key=lambda x: -x["count"])[:limit]
+
+    def shop_hint(self, shop: str) -> Optional[Dict[str, Any]]:
+        """Ostatnia koperta i konto użyte dla tego sklepu."""
+        key = (shop or "").strip().lower()
+        if not key:
+            return None
+        with storage.open_user_db() as conn:
+            row = conn.execute("SELECT category, account_type FROM transactions WHERE type = ? AND "
+                               "py_lower(shop) = ? ORDER BY date DESC, id DESC LIMIT 1", (TYPE_EXPENSE, key)).fetchone()
+        return {"category": row["category"], "account": row["account_type"]} if row else None
+
+    # ------------------------------------------------------------------ eksport
+
+    def csv_bytes(self, whole: bool = False) -> Tuple[str, bytes, int]:
+        """Transakcje w CSV (Excel): miesiąc albo wszystkie. Zwraca (nazwa pliku, dane, liczba wpisów)."""
+        import tempfile
+        from pathlib import Path
+
+        from src.finance import data_io
+
+        name = "MatrixFinance-transakcje" + ("" if whole else f"-{self.ym}") + ".csv"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / name
+            count = data_io.export_transactions_csv(str(path), None if whole else self.ym)
+            return name, path.read_bytes(), count
+
+    def report_html(self) -> Tuple[str, bytes]:
+        from src.finance import data_io
+
+        return f"MatrixFinance-raport-{self.ym}.html", data_io.build_monthly_report_html(self.ym).encode("utf-8")
+
+    # ------------------------------------------------------------------ automatyczne odkładanie
+
+    def autosave_rules(self) -> List[Dict[str, Any]]:
+        from src.finance import autosave
+
+        goals = {str(g["id"]): g["name"] for g in self.goals()}
+        out = []
+        for row in autosave.get_autosave_rules():
+            r = dict(row)
+            r["text"] = autosave.describe_rule(row)
+            r["target_label"] = goals.get(str(r["target"]), f"cel #{r['target']}") if r["target_kind"] == "goal" \
+                else r["target"]
+            out.append(r)
+        return out
+
+    @_changes
+    def save_autosave(self, rule_id: Optional[int], source: str, mode: str, value: float, target_kind: str,
+                      target: str, name: str = "") -> None:
+        from src.finance import autosave
+
+        self._ok(autosave.save_autosave_rule(source, mode, value, target_kind, target, name, True, rule_id))
+
+    @_changes
+    def delete_autosave(self, rule_id: int) -> None:
+        from src.finance import autosave
+
+        autosave.delete_autosave_rule(rule_id)
+
+    @_changes
+    def toggle_autosave(self, rule_id: int) -> bool:
+        from src.finance import autosave
+
+        return autosave.toggle_autosave_rule(rule_id)
+
+    # ------------------------------------------------------------------ blokada PIN-em
+
+    @property
+    def has_pin(self) -> bool:
+        return bool(self.setting(SET_PIN))
+
+    @property
+    def pin_length(self) -> int:
+        try:
+            return int(self.setting(SET_PIN_LEN) or 0)
+        except ValueError:
+            return 0
+
+    @staticmethod
+    def _pin_hash(pin: str, salt: bytes) -> str:
+        import hashlib
+
+        try:
+            return hashlib.pbkdf2_hmac("sha256", pin.encode(), salt, 60000).hex()
+        except (AttributeError, ValueError):  # przeglądarka bez pbkdf2 — prostsza pętla
+            digest = salt + pin.encode()
+            for _ in range(20000):
+                digest = hashlib.sha256(digest).digest()
+            return digest.hex()
+
+    def set_pin(self, pin: str) -> None:
+        import os
+
+        if not (pin.isdigit() and 4 <= len(pin) <= 8):
+            raise ValueError("PIN to 4–8 cyfr.")
+        salt = os.urandom(16)
+        self.set_setting(SET_PIN, salt.hex() + "$" + self._pin_hash(pin, salt))
+        self.set_setting(SET_PIN_LEN, str(len(pin)))
+
+    def check_pin(self, pin: str) -> bool:
+        import hmac
+
+        stored = self.setting(SET_PIN)
+        if not stored or "$" not in stored:
+            return True
+        salt_hex, digest = stored.split("$", 1)
+        return hmac.compare_digest(self._pin_hash(pin or "", bytes.fromhex(salt_hex)), digest)
+
+    def clear_pin(self) -> None:
+        self.set_setting(SET_PIN, "")
+        self.set_setting(SET_PIN_LEN, "")
+
     # ------------------------------------------------------------------ zmiany (operacje)
 
+    @_changes
     def _do(self, op: str, data: Dict[str, Any]) -> None:
         if self.local_only:  # bez komputera / dane przykładowe: tylko lokalnie
             sync.apply_op(sync.make_op(op, data), strict=True)
@@ -242,6 +436,7 @@ class Store:
         if not ok:
             raise ValueError(msg or "Nie udało się zapisać.")
 
+    @_changes
     def add_account(self, name: str, kind: str, balance: float = 0.0, institution: str = "",
                     rate: float = 0.0, custom_label: str = "", custom_group: str = "",
                     custom_flags: str = "") -> None:
@@ -250,6 +445,7 @@ class Store:
                                      custom_label=custom_label or None, custom_group=custom_group or None,
                                      custom_flags=custom_flags or None))
 
+    @_changes
     def add_deposit(self, name: str, amount: float, rate: float, months: int, start: str, source: Optional[str],
                     institution: str = "", kind: str = "deposit", auto_renew: bool = False,
                     return_to: Optional[str] = None) -> None:
@@ -257,6 +453,7 @@ class Store:
                                            institution=institution or None, kind=kind, auto_renew=auto_renew,
                                            return_to=return_to))
 
+    @_changes
     def add_loan(self, name: str, amount: float, installments: int, first_due: str, pay_from: str,
                  rate: float = 0.0, payment: Optional[float] = None, kind: str = "installments",
                  category: str = "", disburse_to: Optional[str] = None, existing: bool = False,
@@ -267,43 +464,52 @@ class Store:
                                  category or None, disburse_to, institution or None, record_history=not existing))
         return self.process_due()[0]
 
+    @_changes
     def update_account(self, name: str, new_name: str, institution: str, rate: Optional[float]) -> None:
         fields: Dict[str, Any] = {"institution": institution.strip() or None}
         if rate is not None:
             fields["interest_rate"] = rate
         self._ok(acc_api.update_account(name, new_name.strip() or name, **fields))
 
+    @_changes
     def close_account(self, name: str, transfer_to: Optional[str]) -> None:
         self._ok(acc_api.close_account(name, transfer_to))
 
+    @_changes
     def valuation(self, name: str, value: float) -> float:
         return acc_api.update_valuation(name, round(value, 2))
 
+    @_changes
     def add_envelope(self, name: str, budget: float, rollover: bool) -> None:
         name = name.strip()
         if not name:
             raise ValueError("Podaj nazwę koperty.")
         self._ok(env_api.add_category(name, round(budget, 2), rollover))
 
+    @_changes
     def update_envelope(self, c_id: int, name: str, budget: float, rollover: bool) -> None:
         name = name.strip()
         if not name:
             raise ValueError("Podaj nazwę koperty.")
         self._ok(env_api.update_category(c_id, name, round(budget, 2), rollover))
 
+    @_changes
     def delete_envelope(self, c_id: int) -> None:
         env_api.delete_category(c_id)
 
+    @_changes
     def add_goal(self, name: str, target: float, account: str, deadline: Optional[str]) -> None:
         if not name.strip():
             raise ValueError("Podaj nazwę celu.")
         self._ok(goals_api.add_piggy_bank(name.strip(), round(target, 2), account, deadline))
 
+    @_changes
     def update_goal(self, goal_id: int, name: str, target: float, account: str, deadline: Optional[str]) -> None:
         if not name.strip():
             raise ValueError("Podaj nazwę celu.")
         self._ok(goals_api.update_piggy_bank(goal_id, name.strip(), round(target, 2), account, deadline))
 
+    @_changes
     def delete_goal(self, goal_id: int) -> float:
         return goals_api.delete_piggy_bank(goal_id, refund=True)
 
@@ -317,6 +523,7 @@ class Store:
         out.sort(key=lambda r: (not r["active"], r["next_due"] or date.max, r["name"]))
         return out
 
+    @_changes
     def save_recurring(self, r_id: Optional[int], name: str, r_type: str, amount: float, account: str,
                        cycle: str, start: str, category: Optional[str] = None, target_account: Optional[str] = None,
                        goal_id: Optional[int] = None) -> int:
@@ -331,12 +538,15 @@ class Store:
         self._ok(recurring.update_recurring(r_id, *args) if r_id else recurring.add_recurring(*args))
         return self.process_due()[0]
 
+    @_changes
     def delete_recurring(self, r_id: int) -> None:
         self._ok(recurring.delete_recurring(r_id))
 
+    @_changes
     def toggle_recurring(self, r_id: int) -> bool:
         return recurring.toggle_recurring_pause(r_id)
 
+    @_changes
     def process_due(self) -> Tuple[int, List[str]]:
         """Bez komputera: księguje zaległe zlecenia stałe i raty, rozlicza lokaty po terminie."""
         if not self.local_only:
@@ -346,6 +556,7 @@ class Store:
 
     # ------------------------------------------------------------------ tryb pracy
 
+    @_changes
     def start_solo(self, fresh: bool) -> None:
         """Przejście na tryb „Bez komputera”. fresh=True: czysta baza (konta Karta i Gotówka, koperty)."""
         if fresh or self.is_demo:
@@ -382,7 +593,16 @@ class Store:
         return encrypt_bytes(payload, password)
 
     def data_digest(self) -> str:
-        return sync.data_fingerprint()
+        gen, digest = self._digest_cache
+        if gen != self._generation:  # liczone raz po każdej zmianie, nie przy każdym odświeżeniu ekranu
+            digest = sync.data_fingerprint()
+            self._digest_cache = (self._generation, digest)
+        return digest
+
+    def has_transactions(self) -> bool:
+        """Czy jest jakikolwiek wpis (w dowolnym miesiącu)."""
+        with storage.open_user_db() as conn:
+            return conn.execute("SELECT 1 FROM transactions LIMIT 1").fetchone() is not None
 
     @property
     def backup_needed(self) -> bool:
@@ -406,6 +626,7 @@ class Store:
         except ValueError:
             return None
 
+    @_changes
     def restore_backup(self, raw: bytes, password: str) -> Dict[str, int]:
         """Wczytuje kopię (.mfx z telefonu albo eksport z komputera) — ZASTĘPUJE dane telefonu."""
         import json
@@ -438,6 +659,7 @@ class Store:
 
     # ------------------------------------------------------------------ synchronizacja
 
+    @_changes
     def import_snapshot(self, raw: bytes, password: Optional[str] = None) -> sync.SnapshotImport:
         password = password or self.password
         if self.is_demo:  # pierwsze prawdziwe dane: koniec trybu demonstracyjnego
@@ -459,6 +681,7 @@ class Store:
 
     # ------------------------------------------------------------------ dane przykładowe / reset
 
+    @_changes
     def load_demo(self) -> None:
         storage.reset_user_db_hard()
         with storage.open_user_db(write=True) as conn:
@@ -499,6 +722,7 @@ class Store:
         goals_api.update_piggy_bank_balance(2, 4200, "Karta", True)
         self.ym = ym
 
+    @_changes
     def reset_all(self) -> None:
         keep_theme = self.theme
         storage.reset_user_db_hard()

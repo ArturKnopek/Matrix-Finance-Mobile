@@ -4,11 +4,12 @@ from __future__ import annotations
 import pytest
 
 from mf_mobile import forms
-from mf_mobile.screens import accounts, dashboard, envelopes, goals, settings, sync_screen, transactions, welcome
+from mf_mobile.screens import (accounts, analysis, dashboard, envelopes, goals, lock, settings, sync_screen,
+                               transactions, welcome)
 from mf_mobile.store import Store
 from mf_mobile.theme import PALETTES, palette
 
-SCREENS = [dashboard, transactions, envelopes, accounts, goals, sync_screen, settings, welcome]
+SCREENS = [dashboard, transactions, envelopes, accounts, goals, sync_screen, settings, welcome, analysis, lock]
 
 
 class _Page:
@@ -38,6 +39,10 @@ class StubApp:
     def process_due(self, quiet=True):
         return self.store.process_due()[0]
 
+    locked = False
+
+    def unlock(self): self.locked = False
+    def shift_month(self, delta): self.store.shift_month(delta)
     def render(self): pass
     def go_tab(self, index): pass
     def open_subpage(self, name): pass

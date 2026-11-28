@@ -27,6 +27,15 @@ Budżet domowy połączony z oszczędzaniem kopertowym — **na telefonie, takż
 8. **Nowy telefon:** *Przywróć kopię zapasową (.mfx)* na ekranie powitalnym.
 9. **Przeniesienie na komputer:** Matrix Finance (PC) › Ustawienia › **Import danych** › plik `.mfx` + hasło. W drugą stronę: na komputerze *Eksport danych* (.mfx), na telefonie *Przywróć z pliku*.
 
+## Nowe w 1.4
+
+* **Analiza i doradca** — Pulpit › „Analiza i doradca”: prognoza wydatków do końca miesiąca, trend 6 miesięcy, wydatki wg kopert, najczęstsze sklepy, wskazówki.
+* **Podpowiedzi sklepów** przy dodawaniu wydatku (sklep + koperta + konto jednym dotknięciem).
+* **PIN** — Ustawienia › Bezpieczeństwo (blokada przy starcie i po powrocie do aplikacji).
+* **Automatyczne odkładanie** — Stałe płatności › „Nowa reguła odkładania” (% wpływu, zaokrąglenia).
+* **Eksport** — Ustawienia › Eksport: CSV (Excel) i raport miesiąca (druk / PDF).
+* Wyszukiwanie we wszystkich miesiącach.
+
 ## Co potrafi
 
 | Ekran | Funkcje |

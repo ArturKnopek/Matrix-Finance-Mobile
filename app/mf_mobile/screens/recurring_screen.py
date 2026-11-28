@@ -34,6 +34,7 @@ def build(app: Any) -> List[ft.Control]:
     if not items:
         out.append(empty(p, "Brak stałych płatności.\nDodaj czynsz, rachunki, subskrypcje albo pensję — aplikacja "
                             "zaksięguje je sama w dniu terminu.", ft.Icons.EVENT_REPEAT))
+        out += _autosave(app)
         return out
     out.append(section(p, manage.summary_text(items)))
     tiles: List[ft.Control] = []
@@ -58,4 +59,26 @@ def build(app: Any) -> List[ft.Control]:
             on_click=lambda e, item=r: manage.recurring_actions(app, item)))
     out.append(card(p, ft.Column(tiles, spacing=0), padding=4))
     out.append(txt("Raty kredytów i zakupów na raty dodajesz w Kontach (Nowe konto › Zobowiązania).", 12, p.muted))
+    out += _autosave(app)
+    return out
+
+
+def _autosave(app: Any) -> List[ft.Control]:
+    """Automatyczne odkładanie: % każdego wpływu albo zaokrąglanie wydatków."""
+    from mf_mobile.ui import secondary_button
+
+    p, store = app.p, app.store
+    rules = store.autosave_rules()
+    out: List[ft.Control] = [section(p, "Automatyczne odkładanie")]
+    if rules:
+        out.append(card(p, ft.Column([ft.ListTile(
+            leading=ft.Icon(ft.Icons.SAVINGS_OUTLINED, color=p.accent if r["is_active"] else p.muted),
+            title=txt(r["text"], 14, p.text if r["is_active"] else p.muted),
+            subtitle=txt(f"› {r['target_label']}" + ("" if r["is_active"] else " · wstrzymana"), 12, p.muted),
+            dense=True, content_padding=ft.Padding.symmetric(horizontal=6),
+            on_click=lambda e, rule=r: manage.autosave_actions(app, rule)) for r in rules], spacing=0), padding=4))
+    else:
+        out.append(txt("Np. 10% każdej pensji od razu na cel albo zaokrąglanie zakupów do 10 zł i odkładanie "
+                       "reszty — dzieje się samo przy każdym wpisie.", 12, p.muted))
+    out.append(secondary_button(p, "Nowa reguła odkładania", lambda e: manage.autosave_sheet(app), ft.Icons.ADD))
     return out

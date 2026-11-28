@@ -9,7 +9,8 @@ import flet as ft
 
 from mf_mobile import MOBILE_VERSION
 from mf_mobile.theme import PALETTES
-from mf_mobile.ui import bold, card, secondary_button, section, txt
+from mf_mobile.store import month_label
+from mf_mobile.ui import bold, card, field, secondary_button, section, txt
 
 
 def build(app: Any) -> List[ft.Control]:
@@ -65,6 +66,33 @@ def build(app: Any) -> List[ft.Control]:
         ]
     out.append(card(p, ft.Column(mode_controls, spacing=8, horizontal_alignment=ft.CrossAxisAlignment.STRETCH)))
 
+    out.append(section(p, "Bezpieczeństwo"))
+    sec: List[ft.Control] = [ft.Row([ft.Icon(ft.Icons.LOCK_OUTLINE if store.has_pin else ft.Icons.LOCK_OPEN,
+                                             color=p.accent if store.has_pin else p.muted),
+                                     txt("Blokada PIN-em: włączona" if store.has_pin else "Blokada PIN-em: wyłączona",
+                                         14, p.text, expand=True)])]
+    sec.append(txt("PIN przy uruchomieniu i po powrocie do aplikacji (po minucie). Zapomniany PIN odblokujesz "
+                   "hasłem kopii zapasowej.", 12, p.muted))
+    if store.has_pin:
+        sec.append(secondary_button(p, "Zmień PIN", lambda e: pin_dialog(app), ft.Icons.PIN_OUTLINED))
+        sec.append(ft.TextButton(content="Wyłącz blokadę PIN-em", on_click=lambda e: pin_off_dialog(app),
+                                 style=ft.ButtonStyle(color=p.muted)))
+    else:
+        sec.append(secondary_button(p, "Ustaw PIN", lambda e: pin_dialog(app), ft.Icons.PIN_OUTLINED))
+    out.append(card(p, ft.Column(sec, spacing=8, horizontal_alignment=ft.CrossAxisAlignment.STRETCH)))
+
+    out.append(section(p, "Eksport"))
+    out.append(card(p, ft.Column([
+        txt(f"Transakcje do Excela (CSV) albo raport miesiąca ({month_label(store.ym)}) — do zapisania w Plikach, "
+            "wysłania mailem lub wydruku.", 12, p.muted),
+        secondary_button(p, "Transakcje miesiąca (CSV)", lambda e: app.page.run_task(export_csv, app, False),
+                         ft.Icons.TABLE_VIEW_OUTLINED),
+        secondary_button(p, "Wszystkie transakcje (CSV)", lambda e: app.page.run_task(export_csv, app, True),
+                         ft.Icons.TABLE_CHART_OUTLINED),
+        secondary_button(p, "Raport miesiąca (do druku / PDF)", lambda e: app.page.run_task(export_report, app),
+                         ft.Icons.PRINT_OUTLINED),
+    ], spacing=10, horizontal_alignment=ft.CrossAxisAlignment.STRETCH)))
+
     out.append(section(p, "Dane"))
     data_controls: List[ft.Control] = []
     data_controls.append(secondary_button(p, "Wczytaj dane przykładowe", lambda e: app.confirm(
@@ -90,3 +118,75 @@ def build(app: Any) -> List[ft.Control]:
             "komputerem — przez zaszyfrowany plik w Twoim OneDrive.", 12, p.muted),
     ], spacing=6)))
     return out
+
+
+def pin_dialog(app: Any) -> None:
+    """Ustawienie / zmiana PIN-u (4–8 cyfr, dwa razy)."""
+    p, store = app.p, app.store
+    first = field(p, "Nowy PIN (4–8 cyfr)", password=True, keyboard_type=ft.KeyboardType.NUMBER, autofocus=True,
+                  max_length=8)
+    second = field(p, "Powtórz PIN", password=True, keyboard_type=ft.KeyboardType.NUMBER, max_length=8)
+
+    def save(e: Any) -> None:
+        a, b = first.value or "", second.value or ""
+        if not (a.isdigit() and 4 <= len(a) <= 8):
+            first.error = "PIN to 4–8 cyfr"
+            first.update()
+            return
+        if a != b:
+            second.error = "PIN-y się różnią"
+            second.update()
+            return
+        store.set_pin(a)
+        app.close()
+        app.render()
+        app.toast("PIN ustawiony. Aplikacja zablokuje się po wyjściu na dłużej niż minutę."
+                  + ("" if store.password else " Ustaw też hasło kopii — przyda się, gdy zapomnisz PIN."))
+
+    app.show(ft.AlertDialog(
+        bgcolor=p.panel, title=bold("PIN do aplikacji", 18),
+        content=ft.Column([first, second], tight=True, spacing=10),
+        actions=[ft.TextButton(content="Anuluj", on_click=lambda e: app.close()),
+                 ft.FilledButton(content="Zapisz", on_click=save,
+                                 style=ft.ButtonStyle(bgcolor=p.accent, color=p.on_accent))]))
+
+
+def pin_off_dialog(app: Any) -> None:
+    p, store = app.p, app.store
+    current = field(p, "Obecny PIN", password=True, keyboard_type=ft.KeyboardType.NUMBER, autofocus=True,
+                    max_length=8)
+
+    def off(e: Any) -> None:
+        if not store.check_pin(current.value or ""):
+            current.error = "Błędny PIN"
+            current.update()
+            return
+        store.clear_pin()
+        app.close()
+        app.render()
+        app.toast("Blokada PIN-em wyłączona.")
+
+    app.show(ft.AlertDialog(
+        bgcolor=p.panel, title=bold("Wyłączyć blokadę?", 18), content=current,
+        actions=[ft.TextButton(content="Anuluj", on_click=lambda e: app.close()),
+                 ft.FilledButton(content="Wyłącz", on_click=off,
+                                 style=ft.ButtonStyle(bgcolor=p.negative, color="#000000"))]))
+
+
+async def export_csv(app: Any, whole: bool) -> None:
+    from mf_mobile.files import deliver
+
+    name, data, count = app.store.csv_bytes(whole)
+    if not count:
+        app.toast("Brak transakcji do eksportu.")
+        return
+    if await deliver(app, name, data, "text/csv", "Eksport transakcji (CSV)"):
+        app.toast(f"Wyeksportowano {count} transakcji (otworzysz w Excelu / Arkuszach).")
+
+
+async def export_report(app: Any) -> None:
+    from mf_mobile.files import deliver
+
+    name, data = app.store.report_html()
+    if await deliver(app, name, data, "text/html", "Raport miesiąca"):
+        app.toast("Raport gotowy — otwórz w przeglądarce, aby wydrukować lub zapisać jako PDF.")
